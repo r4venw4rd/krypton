@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! `krypton` - command-line front end for the local-first encrypted vault.
 
-use std::io::{self, IsTerminal};
-use std::path::PathBuf;
+use std::io::{self, IsTerminal, Write};
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, bail};
@@ -67,6 +67,12 @@ enum Command {
         at: Option<u64>,
     },
 
+    /// Send or receive an encrypted vault update for a paired device
+    Sync {
+        #[command(subcommand)]
+        command: SyncCommand,
+    },
+
     /// Write the decrypted contents to a plaintext JSON file
     Export {
         /// Destination file (written with owner-only permissions)
@@ -105,7 +111,31 @@ fn main() -> Result<()> {
         Command::Export { output, force } => export(&path, &output, force),
         Command::Import { input, force } => import(&path, &input, force),
         Command::Device { command } => device(&path, command),
+        Command::Sync { command } => sync(&path, command),
     }
+}
+
+#[derive(Subcommand)]
+enum SyncCommand {
+    /// Seal the vault body for a trusted device
+    Export {
+        /// Trusted device name, fingerprint or public key
+        #[arg(long, value_name = "PEER")]
+        to: String,
+        /// Destination file for the sealed payload
+        #[arg(long, value_name = "PATH")]
+        out: PathBuf,
+        /// Overwrite the destination if it exists
+        #[arg(long)]
+        force: bool,
+    },
+
+    /// Verify and merge a payload produced by a trusted device
+    Import {
+        /// Payload file produced by `krypton sync export`
+        #[arg(long = "in", value_name = "PATH")]
+        input: PathBuf,
+    },
 }
 
 #[derive(Subcommand)]
@@ -319,6 +349,108 @@ fn remember_device(vault: &mut Vault, record: DeviceRecord) {
         .devices_mut()
         .retain(|existing| existing.public_key != record.public_key);
     vault.devices_mut().push(record);
+}
+
+fn sync(path: &PathBuf, command: SyncCommand) -> Result<()> {
+    let key_path = device_key_path(path);
+    let key = load_local_key(&key_path)?;
+
+    match command {
+        SyncCommand::Export { to, out, force } => {
+            if out.exists() && !force {
+                bail!(
+                    "{} already exists; pass --force to overwrite it",
+                    out.display()
+                );
+            }
+
+            let password = read_password("Master password: ")?;
+            let vault = Vault::open(path, &password)?;
+            let peer = find_peer(&vault, &to)?;
+
+            let payload = krypton_core::sync::create_payload(&vault, &key, &peer.public_key)?;
+            write_secret_file(&out, &payload)?;
+
+            println!(
+                "Sealed {} for {:?} ({}) into {}",
+                item_count(vault.items().len()),
+                peer.name,
+                peer.fingerprint(),
+                out.display()
+            );
+            Ok(())
+        }
+
+        SyncCommand::Import { input } => {
+            let password = read_password("Master password: ")?;
+            let mut vault = Vault::open(path, &password)?;
+
+            let bytes = std::fs::read(&input)
+                .with_context(|| format!("could not read {}", input.display()))?;
+            let incoming = krypton_core::sync::read_payload(&vault, &key, &bytes)?;
+            let stats = krypton_core::sync::merge(vault.body_mut(), incoming.body);
+            vault.save()?;
+
+            println!(
+                "Applied payload from {:?} ({}): {} added, {} updated, {} new device(s)",
+                incoming.sender.name,
+                incoming.sender.fingerprint(),
+                stats.items_added,
+                stats.items_updated,
+                stats.devices_added
+            );
+            println!("Vault now holds {}", item_count(vault.items().len()));
+            Ok(())
+        }
+    }
+}
+
+fn find_peer<'a>(vault: &'a Vault, query: &str) -> Result<&'a DeviceRecord> {
+    let query_lower = query.to_ascii_lowercase();
+    let peer = vault.devices().iter().find(|device| {
+        device.name.to_ascii_lowercase() == query_lower
+            || device.public_key == query
+            || device.fingerprint().starts_with(&query_lower)
+    });
+
+    match peer {
+        Some(peer) => Ok(peer),
+        None => {
+            let known: Vec<&str> = vault
+                .devices()
+                .iter()
+                .map(|device| device.name.as_str())
+                .collect();
+            if known.is_empty() {
+                bail!("no devices are paired yet; run `krypton device invite` first");
+            }
+            bail!(
+                "no trusted device matches {query:?}; known devices: {}",
+                known.join(", ")
+            );
+        }
+    }
+}
+
+fn write_secret_file(path: &Path, bytes: &[u8]) -> Result<()> {
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.mode(0o600);
+    }
+
+    let mut file = options.open(path)?;
+    file.write_all(bytes)?;
+    file.sync_all()?;
+    Ok(())
 }
 
 fn init(path: &PathBuf, force: bool) -> Result<()> {

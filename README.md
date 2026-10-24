@@ -55,6 +55,10 @@ krypton device list
 # Pair with another device (see "Device identities" below)
 krypton device invite
 
+# Exchange an encrypted update with a paired device
+krypton sync export --to phone --out payload.bin
+krypton sync import --in payload.bin
+
 # Import / export plaintext JSON bodies: {"items": [...]}
 krypton import --in backup.json
 krypton export --out backup.json      # prints a plaintext warning
@@ -109,10 +113,29 @@ holding the other's verified public key. Compare the printed fingerprints out
 of band; invites expire after 24 hours and pairing blobs are signed but not
 encrypted (device names and public keys are visible to whoever carries them).
 
-Signed trust edges beyond "this key is in my list", revocation, replication of
-the trust list between paired devices, and TPM/secure-enclave binding are not
-implemented yet; the local seed file is protected by file permissions alone
-rather than by the OS keyring.
+Signed trust edges beyond "this key is in my list", revocation and
+TPM/secure-enclave binding are not implemented yet; the local seed file is
+protected by file permissions alone rather than by the OS keyring.
+
+### Device sync (Phase 3, in progress)
+
+Paired devices exchange an encrypted copy of the vault body as a file (any
+transport works - the payload is opaque bytes):
+
+```sh
+# sending device
+krypton sync export --to phone --out payload.bin
+
+# receiving device (already paired, same vault key material)
+krypton sync import --in payload.bin
+```
+
+The payload is sealed with `HKDF-SHA256(vault key, sender_pub || recipient_pub)`
+and signed by the sender's device key, so the recipient rejects payloads from
+unpaired devices or addressed to another machine. Merging is last-write-wins
+per item id plus a union of device records; deletions are not propagated, there
+is no CRDT or network transport yet, and both devices must have unlocked a vault
+built from the same salt and master password (for now: the same vault file).
 
 ### Known limitations (Phase 1)
 

@@ -199,6 +199,15 @@ impl Vault {
         &self.body
     }
 
+    pub fn body_mut(&mut self) -> &mut VaultBody {
+        &mut self.body
+    }
+
+    /// The derived vault key, for in-crate consumers such as device sync.
+    pub(crate) fn secret_key(&self) -> &SecretKey {
+        &self.key
+    }
+
     /// Re-encrypts the body under a fresh nonce and writes it atomically.
     pub fn save(&self) -> Result<(), VaultError> {
         self.write_encrypted(&self.salt, &self.key)

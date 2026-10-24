@@ -7,7 +7,7 @@ use krypton_crypto::{CryptoError, random_bytes};
 use serde::{Deserialize, Serialize};
 
 /// One entry in the vault.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Item {
     /// Random 128-bit identifier, hex encoded.
     pub id: String,
@@ -36,7 +36,7 @@ impl Item {
 }
 
 /// The secret material an item carries.
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ItemKind {
     Credential {

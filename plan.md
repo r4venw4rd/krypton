@@ -28,7 +28,7 @@
 ### Phase 3: Device Trust Graph & Local Sync
 - [x] Implement device-pairing handshake (ED25519 keypairs per device bound to local TPM/secure enclave where available). -> ED25519 identities and a signed two-message invite/accept handshake with nonce binding (`krypton device init|invite|accept|complete|list`). TPM/secure-enclave binding still pending.
 - [ ] Establish trust graph state structure (signed peer certificates/trust lists). -> Public device records live in the vault body and are filled by the pairing handshake; signed/revocable edges and cross-device replication pending.
-- [ ] Implement encrypted synchronization payloads between trusted devices.
+- [x] Implement encrypted synchronization payloads between trusted devices. -> `krypton sync export|import`: HKDF-derived key over the vault key and both device keys, sender signature, whole-body last-write-wins merge. Transport and CRDT merging pending.
 
 ### Phase 4: CLI / TUI Interface
 - [ ] Build a responsive Terminal User Interface (TUI) using Ratatui for interactive navigation.
