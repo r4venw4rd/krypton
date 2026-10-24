@@ -80,6 +80,14 @@ enum Command {
         query: String,
     },
 
+    /// Update fields of an existing item (only the flags you pass change)
+    Edit {
+        /// Item title (case-insensitive substring) or id prefix
+        query: String,
+        #[command(flatten)]
+        fields: EditFields,
+    },
+
     /// Delete an item from the vault
     Remove {
         /// Item title (case-insensitive substring) or id prefix
@@ -141,6 +149,7 @@ fn main() -> Result<()> {
         Command::Add { item } => add(&path, item),
         Command::Generate { length, no_symbols } => generate(length, !no_symbols),
         Command::Show { query } => show(&path, &query),
+        Command::Edit { query, fields } => edit(&path, &query, &fields),
         Command::Remove { query, force } => remove(&path, &query, force),
         Command::Totp { query, at } => totp(&path, &query, at),
         Command::Export { output, force } => export(&path, &output, force),
@@ -148,6 +157,37 @@ fn main() -> Result<()> {
         Command::Device { command } => device(&path, command),
         Command::Sync { command } => sync(&path, command),
     }
+}
+
+#[derive(clap::Args)]
+struct EditFields {
+    /// New title
+    #[arg(long)]
+    title: Option<String>,
+    /// New username (credentials)
+    #[arg(long)]
+    username: Option<String>,
+    /// New stored password (credentials)
+    #[arg(long)]
+    password: Option<String>,
+    /// New URL (credentials)
+    #[arg(long)]
+    url: Option<String>,
+    /// New notes (credentials)
+    #[arg(long)]
+    notes: Option<String>,
+    /// New contents (notes)
+    #[arg(long)]
+    body: Option<String>,
+    /// New base32 seed (TOTP)
+    #[arg(long)]
+    secret: Option<String>,
+    /// New issuer (TOTP)
+    #[arg(long)]
+    issuer: Option<String>,
+    /// New account name (TOTP)
+    #[arg(long)]
+    account: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -779,6 +819,129 @@ fn show(path: &Path, query: &str) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn edit(path: &Path, query: &str, fields: &EditFields) -> Result<()> {
+    let password = read_password("Master password: ")?;
+    let mut vault = Vault::open(path, &password)?;
+    let mut item = find_item(&vault, query)?.clone();
+
+    if let Some(title) = &fields.title {
+        if title.trim().is_empty() {
+            bail!("item title must not be empty");
+        }
+        item.title.clone_from(title);
+    }
+
+    match &mut item.kind {
+        ItemKind::Credential {
+            username,
+            password,
+            url,
+            notes,
+        } => {
+            reject_flags(
+                fields,
+                &["body", "secret", "issuer", "account"],
+                "credential",
+            )?;
+            if let Some(value) = &fields.username {
+                username.clone_from(value);
+            }
+            if let Some(value) = &fields.password {
+                if value.is_empty() {
+                    bail!("stored password must not be empty");
+                }
+                password.clone_from(value);
+            }
+            if let Some(value) = &fields.url {
+                *url = Some(value.clone());
+            }
+            if let Some(value) = &fields.notes {
+                *notes = Some(value.clone());
+            }
+        }
+
+        ItemKind::Totp {
+            secret,
+            issuer,
+            account,
+        } => {
+            reject_flags(
+                fields,
+                &["username", "password", "url", "notes", "body"],
+                "TOTP",
+            )?;
+            if let Some(value) = &fields.secret {
+                if let Err(err) = totp_code::generate(value, 0) {
+                    bail!("invalid TOTP secret: {err}");
+                }
+                secret.clone_from(value);
+            }
+            if let Some(value) = &fields.issuer {
+                *issuer = Some(value.clone());
+            }
+            if let Some(value) = &fields.account {
+                *account = Some(value.clone());
+            }
+        }
+
+        ItemKind::Note { body } => {
+            reject_flags(
+                fields,
+                &[
+                    "username", "password", "url", "notes", "secret", "issuer", "account",
+                ],
+                "note",
+            )?;
+            if let Some(value) = &fields.body {
+                body.clone_from(value);
+            }
+        }
+    }
+
+    let updated_title = item.title.clone();
+    let Some(slot) = vault
+        .items_mut()
+        .iter_mut()
+        .find(|existing| existing.id == item.id)
+    else {
+        bail!("item disappeared while editing");
+    };
+    *slot = item;
+    vault.save()?;
+
+    println!("Updated {updated_title:?}");
+    Ok(())
+}
+
+/// Rejects edit flags that do not apply to the item's type.
+fn reject_flags(fields: &EditFields, forbidden: &[&str], item_type: &str) -> Result<()> {
+    let values = [
+        ("body", fields.body.is_some()),
+        ("secret", fields.secret.is_some()),
+        ("issuer", fields.issuer.is_some()),
+        ("account", fields.account.is_some()),
+        ("username", fields.username.is_some()),
+        ("password", fields.password.is_some()),
+        ("url", fields.url.is_some()),
+        ("notes", fields.notes.is_some()),
+    ];
+
+    let invalid: Vec<&str> = values
+        .into_iter()
+        .filter(|(name, given)| *given && forbidden.contains(name))
+        .map(|(name, _)| name)
+        .collect();
+
+    if invalid.is_empty() {
+        Ok(())
+    } else {
+        bail!(
+            "--{} cannot be used on a {item_type} item",
+            invalid.join(", --")
+        )
+    }
 }
 
 fn remove(path: &Path, query: &str, force: bool) -> Result<()> {
