@@ -1,6 +1,6 @@
 [package]
 name = "krypton-tui"
-description = "Terminal user interface for krypton (Phase 4 placeholder)"
+description = "Terminal user interface for krypton"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -20,3 +20,7 @@ path = "src/main.rs"
 
 [dependencies]
 krypton-core.workspace = true
+
+anyhow.workspace = true
+clap.workspace = true
+ratatui.workspace = true

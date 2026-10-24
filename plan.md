@@ -31,8 +31,8 @@
 - [x] Implement encrypted synchronization payloads between trusted devices. -> `krypton sync export|import`: HKDF-derived key over the vault key and both device keys, sender signature, whole-body last-write-wins merge. Transport and CRDT merging pending.
 
 ### Phase 4: CLI / TUI Interface
-- [ ] Build a responsive Terminal User Interface (TUI) using Ratatui for interactive navigation.
-- [ ] Implement robust CLI commands matching modern workflow needs (`warden vault ls`, `warden generate`, `warden audit`). -> `init`, `add`, `show`, `edit`, `remove`, `generate`, `unlock`, `lock`, `change-password`, `export`, `import`, `device`, `sync`, `audit`, `totp` exist; only the TUI is still missing.
+- [x] Build a responsive Terminal User Interface (TUI) using Ratatui for interactive navigation. -> `krypton-tui`: unlock screen, item list, detail pane, reveal toggle, terminal guard; state machine and rendering covered by tests.
+- [x] Implement robust CLI commands matching modern workflow needs (`warden vault ls`, `warden generate`, `warden audit`). -> `init`, `add`, `show`, `edit`, `remove`, `generate`, `unlock`, `lock`, `change-password`, `export`, `import`, `device`, `sync`, `audit`, `totp`, `share`, `recovery`.
 
 ### Phase 5: Trustless Sharing & Threshold Recovery
 - [x] Implement shareable access token generation with expiration (TTL) and granular permission scopes. -> `krypton share create|list|redeem`: per-item bearer tokens, `read`/`metadata` scopes, TTL bound as AEAD associated data, audit log in the vault body.
@@ -48,6 +48,8 @@
 3. **CLI Parser:** Setup command-line argument routing using `clap`.
 
 ### Next Up
-- Phase 2: item schemas beyond the initial model (TOTP generation, passkey metadata) and `audit` routines.
-- Password rotation (`change-password`) and vault metadata in the header.
-- Phase 4 TUI (`crates/tui` is a placeholder today).
+- Passkey / WebAuthn metadata storage (the only item schema still missing).
+- Vault metadata in the header (creation time, owner identity).
+- CRDT-based sync with deletion propagation, device revocation, and a network transport.
+- TPM / OS-keyring binding for the device seed; live breach lookup behind `audit`.
+- Cross-platform GUI on top of `krypton-core`.

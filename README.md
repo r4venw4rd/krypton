@@ -14,7 +14,7 @@ see [plan.md](plan.md).
 | `crates/crypto` | Argon2id key derivation, XChaCha20-Poly1305 AEAD, secret key type |
 | `crates/core` | Vault file format, item model, encrypted storage, import/export, TOTP, audit, device identities, share tokens |
 | `crates/cli` | `krypton` binary (clap): `init`, `add`, `unlock`, `lock`, `export`, `import`, `device`, `sync`, `audit`, `totp` |
-| `crates/tui` | Placeholder for the Phase 4 Ratatui interface |
+| `crates/tui` | `krypton-tui`: Ratatui browser (unlock, list, details, reveal) |
 
 ## Build and test
 
@@ -180,6 +180,18 @@ built from the same salt and master password (for now: the same vault file).
   parameters and salt (no creation time, no owner identity).
 * `export` writes decrypted secrets to disk by design; delete the file
   afterwards.
+
+## TUI (Phase 4)
+
+```sh
+krypton-tui --vault ~/.krypton/vault.kv
+```
+
+`krypton-tui` unlocks the vault, lists items on the left and shows the selected
+item on the right. Keys: `Enter` unlock, `j`/`k` or arrows move, `r` toggles
+secret visibility (masked by default), `q`/`Esc` quits. It refuses to start
+when stdout is not a terminal. The interface shares `krypton-core` with the CLI,
+so the vault format and crypto are the same.
 
 ## Sharing (Phase 5)
 
