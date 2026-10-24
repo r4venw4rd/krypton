@@ -32,7 +32,7 @@
 
 ### Phase 4: CLI / TUI Interface
 - [ ] Build a responsive Terminal User Interface (TUI) using Ratatui for interactive navigation.
-- [ ] Implement robust CLI commands matching modern workflow needs (`warden vault ls`, `warden generate`, `warden audit`). -> `init`, `add` (credential/note/totp), `generate`, `unlock`, `lock`, `change-password`, `export`, `import`, `device`, `sync`, `audit`, `totp` exist; the TUI is still a placeholder.
+- [ ] Implement robust CLI commands matching modern workflow needs (`warden vault ls`, `warden generate`, `warden audit`). -> `init`, `add` (credential/note/totp), `show`, `remove`, `generate`, `unlock`, `lock`, `change-password`, `export`, `import`, `device`, `sync`, `audit`, `totp` exist; edit-in-place and the TUI are still missing.
 
 ### Phase 5: Trustless Sharing & Threshold Recovery
 - [ ] Implement shareable access token generation with expiration (TTL) and granular permission scopes.

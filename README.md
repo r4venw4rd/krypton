@@ -61,6 +61,10 @@ krypton add totp --title github-2fa --secret GEZDGNBVGY3TQOJQ --issuer GitHub
 # Decrypt and list items (secrets stay hidden)
 krypton unlock
 
+# Reveal one item, or delete it after confirmation
+krypton show github
+krypton remove github --force
+
 # Re-encrypt with a fresh nonce
 krypton lock
 

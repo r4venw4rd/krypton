@@ -74,6 +74,21 @@ enum Command {
         command: DeviceCommand,
     },
 
+    /// Print one item's fields, secrets included
+    Show {
+        /// Item title (case-insensitive substring) or id prefix
+        query: String,
+    },
+
+    /// Delete an item from the vault
+    Remove {
+        /// Item title (case-insensitive substring) or id prefix
+        query: String,
+        /// Skip the interactive confirmation
+        #[arg(long)]
+        force: bool,
+    },
+
     /// Generate a TOTP code for an item
     Totp {
         /// Item title (case-insensitive substring) or id prefix
@@ -125,6 +140,8 @@ fn main() -> Result<()> {
         Command::Audit => audit(&path),
         Command::Add { item } => add(&path, item),
         Command::Generate { length, no_symbols } => generate(length, !no_symbols),
+        Command::Show { query } => show(&path, &query),
+        Command::Remove { query, force } => remove(&path, &query, force),
         Command::Totp { query, at } => totp(&path, &query, at),
         Command::Export { output, force } => export(&path, &output, force),
         Command::Import { input, force } => import(&path, &input, force),
@@ -714,22 +731,152 @@ fn audit(path: &PathBuf) -> Result<()> {
     Ok(())
 }
 
-fn totp(path: &PathBuf, query: &str, at: Option<u64>) -> Result<()> {
-    if query.trim().is_empty() {
-        bail!("pass an item title or id to generate a code for");
-    }
-
+fn show(path: &Path, query: &str) -> Result<()> {
     let password = read_password("Master password: ")?;
     let vault = Vault::open(path, &password)?;
+    let item = find_item(&vault, query)?;
 
-    let needle = query.to_ascii_lowercase();
-    let item = vault
+    println!("title:  {}", item.title);
+    println!("id:     {}", item.id);
+    println!("type:   {}", item.kind_label());
+
+    match &item.kind {
+        ItemKind::Credential {
+            username,
+            password,
+            url,
+            notes,
+        } => {
+            println!("user:   {username}");
+            println!("pass:   {password}");
+            if let Some(url) = url {
+                println!("url:    {url}");
+            }
+            if let Some(notes) = notes {
+                println!("notes:  {notes}");
+            }
+        }
+        ItemKind::Totp {
+            secret,
+            issuer,
+            account,
+        } => {
+            if let Some(issuer) = issuer {
+                println!("issuer: {issuer}");
+            }
+            if let Some(account) = account {
+                println!("account:{account}");
+            }
+            println!("secret: {secret}");
+            if let Ok(code) = totp_code::generate(secret, now_unix()) {
+                println!(
+                    "code:   {code}  ({}s remaining)",
+                    totp_code::seconds_remaining(now_unix())
+                );
+            }
+        }
+        ItemKind::Note { body } => println!("body:\n{body}"),
+    }
+
+    Ok(())
+}
+
+fn remove(path: &Path, query: &str, force: bool) -> Result<()> {
+    let password = read_password("Master password: ")?;
+    let mut vault = Vault::open(path, &password)?;
+    let item = find_item(&vault, query)?.clone();
+
+    if !force
+        && !confirm(&format!(
+            "Remove {} {:?}? [y/N] ",
+            item.kind_label(),
+            item.title
+        ))?
+    {
+        bail!("not removed; pass --force to delete without confirmation");
+    }
+
+    vault.items_mut().retain(|existing| existing.id != item.id);
+    vault.save()?;
+
+    println!("Removed {} {:?}", item.kind_label(), item.title);
+    Ok(())
+}
+
+fn find_item<'a>(vault: &'a Vault, query: &str) -> Result<&'a Item> {
+    let token = query.trim();
+    if token.is_empty() {
+        bail!("pass an item title or id prefix");
+    }
+
+    // An exact title beats a substring hit, so `show github` is not ambiguous
+    // just because `github-2fa` exists too.
+    let exact: Vec<&Item> = vault
         .items()
         .iter()
-        .find(|item| {
-            item.id.starts_with(query) || item.title.to_ascii_lowercase().contains(&needle)
-        })
-        .with_context(|| format!("no item matching {query:?} in {}", vault.path().display()))?;
+        .filter(|item| item.title.eq_ignore_ascii_case(token))
+        .collect();
+
+    let needle = token.to_ascii_lowercase();
+    let matches: Vec<&Item> = if exact.is_empty() {
+        vault
+            .items()
+            .iter()
+            .filter(|item| {
+                item.id.starts_with(token) || item.title.to_ascii_lowercase().contains(&needle)
+            })
+            .collect()
+    } else {
+        exact
+    };
+
+    match matches.as_slice() {
+        [] => bail!("no item matching {token:?} in {}", vault.path().display()),
+        [item] => Ok(item),
+        many => {
+            let names: Vec<String> = many
+                .iter()
+                .map(|item| format!("{:?} ({})", item.title, &item.id[..8]))
+                .collect();
+            bail!(
+                "{token:?} matches {} items: {}; use a longer id prefix",
+                many.len(),
+                names.join(", ")
+            )
+        }
+    }
+}
+
+/// Asks for confirmation on a terminal; piped input counts as "no".
+fn confirm(prompt: &str) -> Result<bool> {
+    if !io::stdin().is_terminal() {
+        return Ok(false);
+    }
+
+    eprint!("{prompt}");
+    io::stderr().flush()?;
+
+    let mut line = String::new();
+    if io::stdin().read_line(&mut line)? == 0 {
+        return Ok(false);
+    }
+    Ok(matches!(
+        line.trim().to_ascii_lowercase().as_str(),
+        "y" | "yes"
+    ))
+}
+
+fn now_unix() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_secs())
+        .unwrap_or_default()
+}
+
+fn totp(path: &Path, query: &str, at: Option<u64>) -> Result<()> {
+    let password = read_password("Master password: ")?;
+    let vault = Vault::open(path, &password)?;
+    let item = find_item(&vault, query)?;
 
     let ItemKind::Totp { secret, .. } = &item.kind else {
         bail!(
@@ -739,12 +886,7 @@ fn totp(path: &PathBuf, query: &str, at: Option<u64>) -> Result<()> {
         );
     };
 
-    let now = at.unwrap_or_else(|| {
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|elapsed| elapsed.as_secs())
-            .unwrap_or_default()
-    });
+    let now = at.unwrap_or_else(now_unix);
 
     let code = totp_code::generate(secret, now)?;
     println!(
