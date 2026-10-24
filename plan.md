@@ -23,7 +23,7 @@
   - [x] Credentials (username, password, URL, notes)
   - [x] TOTP generation and validation (RFC 6238, SHA-1 / 6 digits / 30 s, ±1 step skew)
   - [ ] Passkey / WebAuthn metadata storage
-- [ ] Implement automated security audit routines (`audit --weak`, duplicate detection, breach check integration mock/API).
+- [x] Implement automated security audit routines (`audit --weak`, duplicate detection, breach check integration mock/API). -> `krypton audit`: weak/common/reused/username-as-password checks, offline denylist (live breach API still pending).
 
 ### Phase 3: Device Trust Graph & Local Sync
 - [ ] Implement device-pairing handshake (ED25519 keypairs per device bound to local TPM/secure enclave where available).

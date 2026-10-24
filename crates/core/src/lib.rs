@@ -6,6 +6,7 @@
 //! titles, usernames, passwords, notes - lives inside the ciphertext, so the
 //! file leaks only the KDF cost and the ciphertext length.
 
+pub mod audit;
 mod item;
 pub mod totp;
 mod vault;

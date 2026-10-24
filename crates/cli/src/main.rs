@@ -48,6 +48,9 @@ enum Command {
     /// Re-derive the vault key from a new master password
     ChangePassword,
 
+    /// Check credentials for weak, common and reused passwords
+    Audit,
+
     /// Generate a TOTP code for an item
     Totp {
         /// Item title (case-insensitive substring) or id prefix
@@ -90,6 +93,7 @@ fn main() -> Result<()> {
         Command::Unlock => unlock(&path),
         Command::Lock => lock(&path),
         Command::ChangePassword => change_password(&path),
+        Command::Audit => audit(&path),
         Command::Totp { query, at } => totp(&path, &query, at),
         Command::Export { output, force } => export(&path, &output, force),
         Command::Import { input, force } => import(&path, &input, force),
@@ -171,6 +175,38 @@ fn change_password(path: &PathBuf) -> Result<()> {
         "Master password changed for {} (fresh salt, fresh nonce)",
         vault.path().display()
     );
+    Ok(())
+}
+
+fn audit(path: &PathBuf) -> Result<()> {
+    let password = read_password("Master password: ")?;
+    let vault = Vault::open(path, &password)?;
+
+    let findings = krypton_core::audit::audit(vault.items());
+    if findings.is_empty() {
+        println!(
+            "No issues found across {} in {}",
+            item_count(vault.items().len()),
+            vault.path().display()
+        );
+        return Ok(());
+    }
+
+    println!(
+        "{} finding(s) across {} in {}",
+        findings.len(),
+        item_count(vault.items().len()),
+        vault.path().display()
+    );
+    for finding in &findings {
+        println!(
+            "  [{:<6}] {:<22} {}",
+            finding.severity.label(),
+            finding.title,
+            finding.message
+        );
+    }
+
     Ok(())
 }
 
@@ -261,6 +297,14 @@ fn import(path: &PathBuf, input: &PathBuf, force: bool) -> Result<()> {
         vault.path().display()
     );
     Ok(())
+}
+
+fn item_count(count: usize) -> String {
+    if count == 1 {
+        "1 item".to_string()
+    } else {
+        format!("{count} items")
+    }
 }
 
 fn default_vault_path() -> Result<PathBuf> {

@@ -12,7 +12,7 @@ see [plan.md](plan.md).
 | Crate | Purpose |
 | --- | --- |
 | `crates/crypto` | Argon2id key derivation, XChaCha20-Poly1305 AEAD, secret key type |
-| `crates/core` | Vault file format, item model, encrypted storage, import/export, TOTP |
+| `crates/core` | Vault file format, item model, encrypted storage, import/export, TOTP, audit |
 | `crates/cli` | `krypton` binary (clap): `init`, `unlock`, `lock`, `export`, `import` |
 | `crates/tui` | Placeholder for the Phase 4 Ratatui interface |
 
@@ -44,6 +44,9 @@ krypton change-password
 
 # Generate a TOTP code for an item (title substring or id prefix)
 krypton totp github
+
+# Check credentials for weak, common and reused passwords
+krypton audit
 
 # Import / export plaintext JSON bodies: {"items": [...]}
 krypton import --in backup.json
