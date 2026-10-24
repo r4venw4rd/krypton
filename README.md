@@ -198,6 +198,22 @@ decryption. The token key travels inside the token: whoever holds the string
 can read the item until it expires - treat it like a password. Expiry is
 enforced by the reader (`redeem`), since tokens are redeemed offline.
 
+## Recovery (Phase 5)
+
+Social recovery splits the master password into guardian shares with Shamir
+secret sharing over GF(256):
+
+```sh
+krypton recovery split --threshold 3 --shares 5 --out-dir guardians
+krypton recovery combine --share share-1.txt --share share-3.txt --share share-5.txt
+```
+
+`split` refuses to run unless the password opens the vault, and `combine` checks
+the reconstruction by opening the vault before printing it. Any `threshold`
+shares rebuild the password and fewer reveal nothing; shares carry no integrity
+tag, so a corrupted share yields a wrong password that the vault check catches.
+Store the share files separately - they are only as strong as where they live.
+
 ## License
 
 Copyright (C) 2026 r4venw4rd

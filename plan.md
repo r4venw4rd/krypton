@@ -36,7 +36,7 @@
 
 ### Phase 5: Trustless Sharing & Threshold Recovery
 - [x] Implement shareable access token generation with expiration (TTL) and granular permission scopes. -> `krypton share create|list|redeem`: per-item bearer tokens, `read`/`metadata` scopes, TTL bound as AEAD associated data, audit log in the vault body.
-- [ ] Implement Shamir's Secret Sharing (or threshold cryptography) for social recovery models (e.g., $m$-of-$n$ guardian setup).
+- [x] Implement Shamir's Secret Sharing (or threshold cryptography) for social recovery models (e.g., $m$-of-$n$ guardian setup). -> `krypton recovery split|combine`, GF(256) Shamir over the master password, `--threshold`/`--shares`, verified against the vault on both ends.
 
 ---
 

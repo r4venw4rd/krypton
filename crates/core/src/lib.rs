@@ -11,6 +11,7 @@ pub mod device;
 mod item;
 pub mod pairing;
 pub mod password;
+pub mod recovery;
 pub mod share;
 pub mod sync;
 pub mod totp;

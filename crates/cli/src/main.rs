@@ -106,6 +106,12 @@ enum Command {
         at: Option<u64>,
     },
 
+    /// Split or recombine the master password with Shamir shares
+    Recovery {
+        #[command(subcommand)]
+        command: RecoveryCommand,
+    },
+
     /// Create, list or redeem time-limited share tokens
     Share {
         #[command(subcommand)]
@@ -161,6 +167,7 @@ fn main() -> Result<()> {
         Command::Export { output, force } => export(&path, &output, force),
         Command::Import { input, force } => import(&path, &input, force),
         Command::Device { command } => device(&path, command),
+        Command::Recovery { command } => recovery(&path, command),
         Command::Share { command } => share(&path, command),
         Command::Sync { command } => sync(&path, command),
     }
@@ -346,6 +353,124 @@ fn generate(length: usize, include_symbols: bool) -> Result<()> {
         "{}",
         krypton_core::password::generate(length, include_symbols)?
     );
+    Ok(())
+}
+
+#[derive(Subcommand)]
+enum RecoveryCommand {
+    /// Split the master password into guardian shares
+    Split {
+        /// Number of shares to produce
+        #[arg(long, default_value_t = 5)]
+        shares: u8,
+        /// How many shares are needed to recover
+        #[arg(long, default_value_t = 3)]
+        threshold: u8,
+        /// Directory for the share files
+        #[arg(long, value_name = "DIR")]
+        out_dir: PathBuf,
+        /// Overwrite existing share files
+        #[arg(long)]
+        force: bool,
+    },
+
+    /// Recombine shares into the master password
+    Combine {
+        /// Share files (repeat the flag for each share)
+        #[arg(long = "share", value_name = "PATH", required = true)]
+        shares: Vec<PathBuf>,
+    },
+}
+
+fn recovery(path: &Path, command: RecoveryCommand) -> Result<()> {
+    match command {
+        RecoveryCommand::Split {
+            shares,
+            threshold,
+            out_dir,
+            force,
+        } => recovery_split(path, threshold, shares, &out_dir, force),
+        RecoveryCommand::Combine { shares } => recovery_combine(path, &shares),
+    }
+}
+
+fn recovery_split(
+    vault_path: &Path,
+    threshold: u8,
+    total: u8,
+    out_dir: &Path,
+    force: bool,
+) -> Result<()> {
+    let password = read_password("Master password: ")?;
+    // Refuse to split a typo: the password must open the vault it protects.
+    Vault::open(vault_path, &password).with_context(|| {
+        format!(
+            "the supplied password does not open {}",
+            vault_path.display()
+        )
+    })?;
+
+    let shares = krypton_core::recovery::split(password.as_bytes(), threshold, total)?;
+
+    std::fs::create_dir_all(out_dir)
+        .with_context(|| format!("could not create {}", out_dir.display()))?;
+
+    for share in &shares {
+        let file = out_dir.join(format!("share-{}.txt", share.index));
+        if file.exists() && !force {
+            bail!(
+                "{} already exists; pass --force to replace it",
+                file.display()
+            );
+        }
+        write_secret_file(&file, format!("{}\n", share.encode()?).as_bytes())?;
+        println!("wrote {}", file.display());
+    }
+
+    println!();
+    println!(
+        "Give each file to a different guardian. Any {threshold} of {total} shares reconstruct the master password:"
+    );
+    println!(
+        "  krypton recovery combine --share share-1.txt --share share-3.txt --share share-5.txt"
+    );
+    eprintln!(
+        "WARNING: each share alone is useless, but {threshold} shares rebuild the master password. Store them separately."
+    );
+    Ok(())
+}
+
+fn recovery_combine(vault_path: &Path, files: &[PathBuf]) -> Result<()> {
+    let mut shares = Vec::with_capacity(files.len());
+    for file in files {
+        let text = std::fs::read_to_string(file)
+            .with_context(|| format!("could not read {}", file.display()))?;
+        let share = krypton_core::recovery::Share::decode(&text)
+            .with_context(|| format!("could not parse {}", file.display()))?;
+        shares.push(share);
+    }
+
+    let secret = krypton_core::recovery::combine(&shares)?;
+    let password = String::from_utf8(secret)
+        .map_err(|_| anyhow::anyhow!("shares do not reconstruct a valid password"))?;
+
+    if vault_path.exists() {
+        Vault::open(vault_path, &password).map_err(|_| {
+            anyhow::anyhow!(
+                "shares do not reconstruct the master password for {}",
+                vault_path.display()
+            )
+        })?;
+        eprintln!("verified against {}", vault_path.display());
+    } else {
+        eprintln!(
+            "no vault at {}; the reconstructed password is unverified",
+            vault_path.display()
+        );
+    }
+
+    println!("{password}");
+    eprintln!("WARNING: handle this password with care; it unlocks the whole vault.");
     Ok(())
 }
 
