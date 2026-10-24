@@ -1,0 +1,27 @@
+[workspace]
+resolver = "2"
+members = ["crates/core", "crates/crypto", "crates/cli", "crates/tui"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "AGPL-3.0-or-later"
+authors = ["r4venw4rd"]
+repository = "https://github.com/r4venw4rd/krypton"
+rust-version = "1.85"
+
+[workspace.dependencies]
+krypton-core = { path = "crates/core" }
+krypton-crypto = { path = "crates/crypto" }
+
+anyhow = "1"
+argon2 = { version = "0.5", features = ["std"] }
+base64 = "0.22"
+chacha20poly1305 = { version = "0.10", features = ["std"] }
+clap = { version = "4", features = ["derive", "env"] }
+getrandom = { version = "0.2", features = ["std"] }
+rpassword = "7"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+zeroize = { version = "1", features = ["derive"] }

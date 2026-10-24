@@ -1,0 +1,53 @@
+# Project Plan: Zero-Knowledge Device-Bound Trust Fabric
+
+## 1. Project Overview & Architecture Vision
+- **Core Concept:** A local-first, zero-knowledge, device-bound trust fabric and identity/secret orchestration platform (replacing traditional password managers).
+- **Tech Stack:** Rust (memory safety, minimal runtime, robust crypto libraries like `ring` or `age`, CRDT/async sync), TUI/CLI (Ratatui / clap) + cross-platform GUI.
+- **Key Differentiators:** 
+  - Device Trust Graph (no central cloud plaintext/keys, peer-to-peer or encrypted blob sync via trusted devices).
+  - Trustless Sharing (shareable access tokens with TTL and audit trails instead of raw credentials).
+  - Threshold Social Recovery (e.g., 3-of-5 secret sharing model).
+  - Comprehensive Identity Orchestration (Passwords, TOTP, Passkeys, Secure Notes, Risk Scoring, Breach Detection).
+
+---
+
+## 2. MVP Scope & Milestones
+
+### Phase 1: Core Cryptography & Local-First Storage (Rust Engine)
+- [x] Define Master Key Derivation Function (Argon2id) and local encryption scheme (AES-GCM-256 / ChaCha20Poly1305). -> Argon2id (64 MiB, 3 passes) + XChaCha20-Poly1305 in `crates/crypto`.
+- [x] Implement local-first encrypted vault storage format (JSON/SQLite encrypted blocks). -> Single JSON envelope with header-bound AEAD in `crates/core`.
+- [x] Implement CLI baseline (`init`, `unlock`, `lock`, `export`, `import`). -> `crates/cli`.
+
+### Phase 2: Secret Types & Orchestration Engine
+- [ ] Implement item schemas for:
+  - Credentials (username, password, URL, notes)
+  - TOTP generation and validation
+  - Passkey / WebAuthn metadata storage
+- [ ] Implement automated security audit routines (`audit --weak`, duplicate detection, breach check integration mock/API).
+
+### Phase 3: Device Trust Graph & Local Sync
+- [ ] Implement device-pairing handshake (ED25519 keypairs per device bound to local TPM/secure enclave where available).
+- [ ] Establish trust graph state structure (signed peer certificates/trust lists).
+- [ ] Implement encrypted synchronization payloads between trusted devices.
+
+### Phase 4: CLI / TUI Interface
+- [ ] Build a responsive Terminal User Interface (TUI) using Ratatui for interactive navigation.
+- [ ] Implement robust CLI commands matching modern workflow needs (`warden vault ls`, `warden generate`, `warden audit`).
+
+### Phase 5: Trustless Sharing & Threshold Recovery
+- [ ] Implement shareable access token generation with expiration (TTL) and granular permission scopes.
+- [ ] Implement Shamir's Secret Sharing (or threshold cryptography) for social recovery models (e.g., $m$-of-$n$ guardian setup).
+
+---
+
+## 3. Agent Execution & Task Breakdown
+
+### Milestone 1 Tasks (Done)
+1. **Repository Setup:** Initialize Cargo workspace with modular crates (`core`, `crypto`, `cli`, `tui`).
+2. **Encryption Module:** Write robust serialization and authenticated encryption wrappers in Rust.
+3. **CLI Parser:** Setup command-line argument routing using `clap`.
+
+### Next Up
+- Phase 2: item schemas beyond the initial model (TOTP generation, passkey metadata) and `audit` routines.
+- Password rotation (`change-password`) and vault metadata in the header.
+- Phase 4 TUI (`crates/tui` is a placeholder today).

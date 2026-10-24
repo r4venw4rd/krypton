@@ -1,0 +1,18 @@
+[package]
+name = "krypton-core"
+description = "Vault format, item model and local-first storage for krypton"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+krypton-crypto.workspace = true
+
+base64.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+zeroize.workspace = true
