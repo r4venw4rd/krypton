@@ -7,6 +7,7 @@
 //! file leaks only the KDF cost and the ciphertext length.
 
 mod item;
+pub mod totp;
 mod vault;
 
 pub use item::{Item, ItemKind};

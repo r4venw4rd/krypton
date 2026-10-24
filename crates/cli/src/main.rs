@@ -3,10 +3,11 @@
 
 use std::io::{self, IsTerminal};
 use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
-use krypton_core::{ItemKind, Vault};
+use krypton_core::{ItemKind, Vault, totp as totp_code};
 
 /// Where the vault lives unless `--vault` / `KRYPTON_VAULT` says otherwise.
 const DEFAULT_DIR: &str = ".krypton";
@@ -47,6 +48,15 @@ enum Command {
     /// Re-derive the vault key from a new master password
     ChangePassword,
 
+    /// Generate a TOTP code for an item
+    Totp {
+        /// Item title (case-insensitive substring) or id prefix
+        query: String,
+        /// Unix time to generate the code for (defaults to now)
+        #[arg(long, value_name = "UNIX")]
+        at: Option<u64>,
+    },
+
     /// Write the decrypted contents to a plaintext JSON file
     Export {
         /// Destination file (written with owner-only permissions)
@@ -80,6 +90,7 @@ fn main() -> Result<()> {
         Command::Unlock => unlock(&path),
         Command::Lock => lock(&path),
         Command::ChangePassword => change_password(&path),
+        Command::Totp { query, at } => totp(&path, &query, at),
         Command::Export { output, force } => export(&path, &output, force),
         Command::Import { input, force } => import(&path, &input, force),
     }
@@ -159,6 +170,48 @@ fn change_password(path: &PathBuf) -> Result<()> {
     println!(
         "Master password changed for {} (fresh salt, fresh nonce)",
         vault.path().display()
+    );
+    Ok(())
+}
+
+fn totp(path: &PathBuf, query: &str, at: Option<u64>) -> Result<()> {
+    if query.trim().is_empty() {
+        bail!("pass an item title or id to generate a code for");
+    }
+
+    let password = read_password("Master password: ")?;
+    let vault = Vault::open(path, &password)?;
+
+    let needle = query.to_ascii_lowercase();
+    let item = vault
+        .items()
+        .iter()
+        .find(|item| {
+            item.id.starts_with(query) || item.title.to_ascii_lowercase().contains(&needle)
+        })
+        .with_context(|| format!("no item matching {query:?} in {}", vault.path().display()))?;
+
+    let ItemKind::Totp { secret, .. } = &item.kind else {
+        bail!(
+            "{} is a {} item, not a TOTP item",
+            item.title,
+            item.kind_label()
+        );
+    };
+
+    let now = at.unwrap_or_else(|| {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_secs())
+            .unwrap_or_default()
+    });
+
+    let code = totp_code::generate(secret, now)?;
+    println!(
+        "{}  {}  ({}s remaining)",
+        item.title,
+        code,
+        totp_code::seconds_remaining(now)
     );
     Ok(())
 }

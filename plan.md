@@ -20,9 +20,9 @@
 
 ### Phase 2: Secret Types & Orchestration Engine
 - [ ] Implement item schemas for:
-  - Credentials (username, password, URL, notes)
-  - TOTP generation and validation
-  - Passkey / WebAuthn metadata storage
+  - [x] Credentials (username, password, URL, notes)
+  - [x] TOTP generation and validation (RFC 6238, SHA-1 / 6 digits / 30 s, ±1 step skew)
+  - [ ] Passkey / WebAuthn metadata storage
 - [ ] Implement automated security audit routines (`audit --weak`, duplicate detection, breach check integration mock/API).
 
 ### Phase 3: Device Trust Graph & Local Sync
