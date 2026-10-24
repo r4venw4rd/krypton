@@ -7,6 +7,7 @@
 //! file leaks only the KDF cost and the ciphertext length.
 
 pub mod audit;
+pub mod device;
 mod item;
 pub mod totp;
 mod vault;

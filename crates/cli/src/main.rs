@@ -7,6 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
+use krypton_core::device::{DeviceKey, DeviceRecord, device_key_path};
 use krypton_core::{ItemKind, Vault, totp as totp_code};
 
 /// Where the vault lives unless `--vault` / `KRYPTON_VAULT` says otherwise.
@@ -50,6 +51,12 @@ enum Command {
 
     /// Check credentials for weak, common and reused passwords
     Audit,
+
+    /// Manage this device's Ed25519 identity
+    Device {
+        #[command(subcommand)]
+        command: DeviceCommand,
+    },
 
     /// Generate a TOTP code for an item
     Totp {
@@ -97,6 +104,94 @@ fn main() -> Result<()> {
         Command::Totp { query, at } => totp(&path, &query, at),
         Command::Export { output, force } => export(&path, &output, force),
         Command::Import { input, force } => import(&path, &input, force),
+        Command::Device { command } => device(&path, command),
+    }
+}
+
+#[derive(Subcommand)]
+enum DeviceCommand {
+    /// Create a signing key for this device and register its public key
+    Init {
+        /// Friendly device name shown in the trust list
+        #[arg(long, value_name = "NAME")]
+        name: String,
+        /// Replace an existing device key and re-register this device
+        #[arg(long)]
+        force: bool,
+    },
+
+    /// List the devices registered in the vault
+    List,
+}
+
+fn device(path: &PathBuf, command: DeviceCommand) -> Result<()> {
+    let key_path = device_key_path(path);
+
+    match command {
+        DeviceCommand::Init { name, force } => {
+            if key_path.exists() && !force {
+                bail!(
+                    "{} already holds a device key; pass --force to replace it",
+                    key_path.display()
+                );
+            }
+
+            let password = read_password("Master password: ")?;
+            let mut vault = Vault::open(path, &password)?;
+
+            // A replaced key leaves a stale record behind: drop it so the trust
+            // list only names identities that still exist somewhere.
+            let previous = DeviceKey::load(&key_path).ok().map(|key| key.public_key());
+
+            let key = DeviceKey::generate()?;
+            key.save(&key_path)?;
+
+            let record = DeviceRecord::new(name, &key);
+            vault
+                .devices_mut()
+                .retain(|existing| Some(&existing.public_key) != previous.as_ref());
+            vault
+                .devices_mut()
+                .retain(|existing| existing.public_key != record.public_key);
+            vault.devices_mut().push(record.clone());
+            vault.save()?;
+
+            println!("Device registered as {:?}", record.name);
+            println!("  fingerprint: {}", record.fingerprint());
+            println!("  key file:    {}", key_path.display());
+            Ok(())
+        }
+
+        DeviceCommand::List => {
+            let password = read_password("Master password: ")?;
+            let vault = Vault::open(path, &password)?;
+
+            let local_key = DeviceKey::load(&key_path).ok();
+            let local_public = local_key.as_ref().map(DeviceKey::public_key);
+
+            if vault.devices().is_empty() {
+                println!("No devices registered in {}", vault.path().display());
+                return Ok(());
+            }
+
+            println!(
+                "{} device(s) in {}",
+                vault.devices().len(),
+                vault.path().display()
+            );
+            for device in vault.devices() {
+                let marker = if local_public.as_deref() == Some(device.public_key.as_str()) {
+                    "*"
+                } else {
+                    " "
+                };
+                println!(" {marker} {:<20} {}", device.name, device.fingerprint());
+            }
+            if local_key.is_none() {
+                println!("   (no local device key at {})", key_path.display());
+            }
+            Ok(())
+        }
     }
 }
 

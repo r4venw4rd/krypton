@@ -2,6 +2,7 @@
 use std::fs;
 use std::path::PathBuf;
 
+use krypton_core::device::{DeviceKey, DeviceRecord};
 use krypton_core::{Item, ItemKind, KdfParams, Vault, VaultError};
 use serde_json::Value;
 
@@ -204,6 +205,22 @@ fn changing_password_to_empty_keeps_the_vault_readable() {
     let err = vault.change_password("").unwrap_err();
     assert!(matches!(err, VaultError::EmptyPassword));
     assert!(Vault::open(&path, password()).is_ok());
+}
+
+#[test]
+fn device_records_survive_a_round_trip() {
+    let dir = TempDir::new("devices");
+    let path = dir.file("vault.kv");
+
+    let key = DeviceKey::generate().unwrap();
+    let record = DeviceRecord::new("laptop", &key);
+
+    let mut vault = create(&path);
+    vault.devices_mut().push(record.clone());
+    vault.save().unwrap();
+
+    let reopened = Vault::open(&path, password()).unwrap();
+    assert_eq!(reopened.devices(), &[record]);
 }
 
 #[test]

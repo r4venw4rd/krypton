@@ -65,11 +65,18 @@ pub enum VaultError {
 pub struct VaultBody {
     #[serde(default)]
     pub items: Vec<Item>,
+    /// Public identities of devices trusted by this vault. The matching private
+    /// keys stay on each device (see [`crate::device`]).
+    #[serde(default)]
+    pub devices: Vec<crate::device::DeviceRecord>,
 }
 
 impl VaultBody {
     pub fn new(items: Vec<Item>) -> Self {
-        Self { items }
+        Self {
+            items,
+            devices: Vec::new(),
+        }
     }
 }
 
@@ -180,6 +187,14 @@ impl Vault {
         &mut self.body.items
     }
 
+    pub fn devices(&self) -> &[crate::device::DeviceRecord] {
+        &self.body.devices
+    }
+
+    pub fn devices_mut(&mut self) -> &mut Vec<crate::device::DeviceRecord> {
+        &mut self.body.devices
+    }
+
     pub fn body(&self) -> &VaultBody {
         &self.body
     }
@@ -281,7 +296,7 @@ fn decode_fixed<const N: usize>(encoded: &str, field: &str) -> Result<[u8; N], V
 }
 
 /// Writes `bytes` with owner-only permissions, replacing `path` atomically.
-fn write_private(path: &Path, bytes: &[u8]) -> Result<(), VaultError> {
+pub(crate) fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     if let Some(parent) = path.parent()
         && !parent.as_os_str().is_empty()
     {
@@ -304,7 +319,7 @@ fn write_private(path: &Path, bytes: &[u8]) -> Result<(), VaultError> {
 
     if let Err(err) = fs::rename(&tmp, path) {
         let _ = fs::remove_file(&tmp);
-        return Err(err.into());
+        return Err(err);
     }
     Ok(())
 }

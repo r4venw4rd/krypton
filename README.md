@@ -12,7 +12,7 @@ see [plan.md](plan.md).
 | Crate | Purpose |
 | --- | --- |
 | `crates/crypto` | Argon2id key derivation, XChaCha20-Poly1305 AEAD, secret key type |
-| `crates/core` | Vault file format, item model, encrypted storage, import/export, TOTP, audit |
+| `crates/core` | Vault file format, item model, encrypted storage, import/export, TOTP, audit, device identities |
 | `crates/cli` | `krypton` binary (clap): `init`, `unlock`, `lock`, `export`, `import` |
 | `crates/tui` | Placeholder for the Phase 4 Ratatui interface |
 
@@ -48,6 +48,10 @@ krypton totp github
 # Check credentials for weak, common and reused passwords
 krypton audit
 
+# Create this device's Ed25519 identity and list the trust list
+krypton device init --name laptop
+krypton device list
+
 # Import / export plaintext JSON bodies: {"items": [...]}
 krypton import --in backup.json
 krypton export --out backup.json      # prints a plaintext warning
@@ -74,6 +78,18 @@ and tested.
 * **No key at rest:** the derived key lives only in memory in a `SecretKey`
   that zeroizes on drop; nothing is cached between commands. `Debug` output for
   keys and item secrets is redacted.
+
+### Device identities (Phase 3, in progress)
+
+Each device gets its own Ed25519 keypair. The seed lives in
+`vault.device.key` next to the vault (mode `0600`), while only the public key
+is stored inside the encrypted vault, so copying `vault.kv` to another machine
+does not give it a trusted identity. `krypton device list` marks the entry
+backed by the local key with `*` and shows short fingerprints.
+
+The pairing handshake, signed trust edges and TPM/secure-enclave binding are
+not implemented yet, and the local seed file is protected by file permissions
+alone rather than by the OS keyring.
 
 ### Known limitations (Phase 1)
 
