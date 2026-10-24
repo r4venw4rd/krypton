@@ -186,15 +186,37 @@ impl Vault {
 
     /// Re-encrypts the body under a fresh nonce and writes it atomically.
     pub fn save(&self) -> Result<(), VaultError> {
+        self.write_encrypted(&self.salt, &self.key)
+    }
+
+    /// Re-derives the key from a new master password with a fresh salt.
+    ///
+    /// The file is written before the in-memory salt/key switch over, so a
+    /// failed write leaves the vault openable with the old password.
+    pub fn change_password(&mut self, new_password: &str) -> Result<(), VaultError> {
+        if new_password.is_empty() {
+            return Err(VaultError::EmptyPassword);
+        }
+
+        let salt = random_bytes::<SALT_LEN>()?;
+        let key = derive_key(new_password.as_bytes(), &salt, &self.kdf)?;
+        self.write_encrypted(&salt, &key)?;
+
+        self.salt = salt;
+        self.key = key;
+        Ok(())
+    }
+
+    fn write_encrypted(&self, salt: &[u8; SALT_LEN], key: &SecretKey) -> Result<(), VaultError> {
         let plaintext = serde_json::to_vec(&self.body)?;
-        let aad = associated_data(FORMAT, VERSION, &self.kdf, &self.salt);
-        let sealed = aead::seal(&self.key, &plaintext, &aad)?;
+        let aad = associated_data(FORMAT, VERSION, &self.kdf, salt);
+        let sealed = aead::seal(key, &plaintext, &aad)?;
 
         let file = VaultFile {
             format: FORMAT.to_string(),
             version: VERSION,
             kdf: self.kdf.clone(),
-            salt: BASE64.encode(self.salt),
+            salt: BASE64.encode(salt),
             nonce: BASE64.encode(sealed.nonce),
             ciphertext: BASE64.encode(sealed.ciphertext),
         };

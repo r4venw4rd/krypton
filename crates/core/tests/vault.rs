@@ -168,6 +168,45 @@ fn export_then_import_preserves_items() {
 }
 
 #[test]
+fn changing_password_rotates_salt_and_rejects_the_old_one() {
+    let dir = TempDir::new("change-password");
+    let path = dir.file("vault.kv");
+
+    let mut vault = create(&path);
+    vault
+        .items_mut()
+        .push(credential("mail", "r4venw4rd", "pw"));
+    vault.save().unwrap();
+
+    let before: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    vault
+        .change_password("a brand new master password")
+        .unwrap();
+    let after: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+
+    assert_ne!(before["salt"], after["salt"]);
+    assert_ne!(before["nonce"], after["nonce"]);
+
+    let err = Vault::open(&path, password()).unwrap_err();
+    assert!(matches!(err, VaultError::Decrypt));
+
+    let reopened = Vault::open(&path, "a brand new master password").unwrap();
+    assert_eq!(reopened.items().len(), 1);
+    assert_eq!(reopened.items()[0].title, "mail");
+}
+
+#[test]
+fn changing_password_to_empty_keeps_the_vault_readable() {
+    let dir = TempDir::new("change-password-empty");
+    let path = dir.file("vault.kv");
+    let mut vault = create(&path);
+
+    let err = vault.change_password("").unwrap_err();
+    assert!(matches!(err, VaultError::EmptyPassword));
+    assert!(Vault::open(&path, password()).is_ok());
+}
+
+#[test]
 fn creating_over_existing_vault_is_refused() {
     let dir = TempDir::new("exists");
     let path = dir.file("vault.kv");

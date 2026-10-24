@@ -44,6 +44,9 @@ enum Command {
     /// Re-encrypt the vault with a fresh nonce
     Lock,
 
+    /// Re-derive the vault key from a new master password
+    ChangePassword,
+
     /// Write the decrypted contents to a plaintext JSON file
     Export {
         /// Destination file (written with owner-only permissions)
@@ -76,6 +79,7 @@ fn main() -> Result<()> {
         Command::Init { force } => init(&path, force),
         Command::Unlock => unlock(&path),
         Command::Lock => lock(&path),
+        Command::ChangePassword => change_password(&path),
         Command::Export { output, force } => export(&path, &output, force),
         Command::Import { input, force } => import(&path, &input, force),
     }
@@ -93,7 +97,7 @@ fn init(path: &PathBuf, force: bool) -> Result<()> {
             .with_context(|| format!("could not replace {}", path.display()))?;
     }
 
-    let password = read_new_password()?;
+    let password = read_new_password("Master password")?;
     let vault = Vault::create(path, &password)?;
 
     println!("Initialized empty vault at {}", vault.path().display());
@@ -145,6 +149,20 @@ fn lock(path: &PathBuf) -> Result<()> {
     Ok(())
 }
 
+fn change_password(path: &PathBuf) -> Result<()> {
+    let current = read_password("Current master password: ")?;
+    let mut vault = Vault::open(path, &current)?;
+
+    let new_password = read_new_password("New master password")?;
+    vault.change_password(&new_password)?;
+
+    println!(
+        "Master password changed for {} (fresh salt, fresh nonce)",
+        vault.path().display()
+    );
+    Ok(())
+}
+
 fn export(path: &PathBuf, output: &PathBuf, force: bool) -> Result<()> {
     if output.exists() && !force {
         bail!(
@@ -181,7 +199,7 @@ fn import(path: &PathBuf, input: &PathBuf, force: bool) -> Result<()> {
             .with_context(|| format!("could not replace {}", path.display()))?;
     }
 
-    let password = read_new_password()?;
+    let password = read_new_password("Master password")?;
     let vault = Vault::import_plaintext(input, path, &password)?;
 
     println!(
@@ -218,11 +236,11 @@ fn read_password(prompt: &str) -> Result<String> {
 }
 
 /// Reads and confirms a new master password (two lines when piped).
-fn read_new_password() -> Result<String> {
+fn read_new_password(label: &str) -> Result<String> {
     let (first, second) = if io::stdin().is_terminal() {
         (
-            rpassword::prompt_password("Master password: ")?,
-            rpassword::prompt_password("Confirm master password: ")?,
+            rpassword::prompt_password(format!("{label}: "))?,
+            rpassword::prompt_password(format!("Confirm {label}: "))?,
         )
     } else {
         (read_password("")?, read_password("")?)
