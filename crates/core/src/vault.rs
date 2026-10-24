@@ -81,6 +81,9 @@ pub struct VaultBody {
     /// keys stay on each device (see [`crate::device`]).
     #[serde(default)]
     pub devices: Vec<crate::device::DeviceRecord>,
+    /// Audit log of share tokens issued from this vault (see [`crate::share`]).
+    #[serde(default)]
+    pub shares: Vec<crate::share::ShareRecord>,
 }
 
 impl VaultBody {
@@ -90,6 +93,7 @@ impl VaultBody {
         Self {
             items,
             devices: Vec::new(),
+            shares: Vec::new(),
         }
     }
 }
@@ -235,6 +239,17 @@ impl Vault {
     /// Mutable access to the trust list; call [`Vault::save`] afterwards.
     pub const fn devices_mut(&mut self) -> &mut Vec<crate::device::DeviceRecord> {
         &mut self.body.devices
+    }
+
+    /// Audit log of share tokens issued from this vault.
+    #[must_use]
+    pub fn shares(&self) -> &[crate::share::ShareRecord] {
+        &self.body.shares
+    }
+
+    /// Mutable access to the share log; call [`Vault::save`] afterwards.
+    pub const fn shares_mut(&mut self) -> &mut Vec<crate::share::ShareRecord> {
+        &mut self.body.shares
     }
 
     /// The whole decrypted body.

@@ -35,7 +35,7 @@
 - [ ] Implement robust CLI commands matching modern workflow needs (`warden vault ls`, `warden generate`, `warden audit`). -> `init`, `add`, `show`, `edit`, `remove`, `generate`, `unlock`, `lock`, `change-password`, `export`, `import`, `device`, `sync`, `audit`, `totp` exist; only the TUI is still missing.
 
 ### Phase 5: Trustless Sharing & Threshold Recovery
-- [ ] Implement shareable access token generation with expiration (TTL) and granular permission scopes.
+- [x] Implement shareable access token generation with expiration (TTL) and granular permission scopes. -> `krypton share create|list|redeem`: per-item bearer tokens, `read`/`metadata` scopes, TTL bound as AEAD associated data, audit log in the vault body.
 - [ ] Implement Shamir's Secret Sharing (or threshold cryptography) for social recovery models (e.g., $m$-of-$n$ guardian setup).
 
 ---

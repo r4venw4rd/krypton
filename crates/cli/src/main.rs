@@ -8,7 +8,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use krypton_core::device::{DeviceKey, DeviceRecord, device_key_path};
-use krypton_core::{Item, ItemKind, Vault, pairing, totp as totp_code};
+use krypton_core::{Item, ItemKind, Vault, pairing, share as share_token, totp as totp_code};
 
 /// Where the vault lives unless `--vault` / `KRYPTON_VAULT` says otherwise.
 const DEFAULT_DIR: &str = ".krypton";
@@ -106,6 +106,12 @@ enum Command {
         at: Option<u64>,
     },
 
+    /// Create, list or redeem time-limited share tokens
+    Share {
+        #[command(subcommand)]
+        command: ShareCommand,
+    },
+
     /// Send or receive an encrypted vault update for a paired device
     Sync {
         #[command(subcommand)]
@@ -155,8 +161,43 @@ fn main() -> Result<()> {
         Command::Export { output, force } => export(&path, &output, force),
         Command::Import { input, force } => import(&path, &input, force),
         Command::Device { command } => device(&path, command),
+        Command::Share { command } => share(&path, command),
         Command::Sync { command } => sync(&path, command),
     }
+}
+
+#[derive(Subcommand)]
+enum ShareCommand {
+    /// Create a token for one item
+    Create {
+        /// Item title (case-insensitive substring) or id prefix
+        query: String,
+        /// Lifetime: 30m, 24h, 7d or a number of seconds
+        #[arg(long, default_value = "24h")]
+        ttl: String,
+        /// What the token exposes: read or metadata
+        #[arg(long, default_value = "read")]
+        scope: String,
+        /// Write the token to a file (0600) instead of stdout
+        #[arg(long, value_name = "PATH")]
+        out: Option<PathBuf>,
+        /// Overwrite the output file if it exists
+        #[arg(long)]
+        force: bool,
+    },
+
+    /// List tokens issued from this vault
+    List,
+
+    /// Show the item behind a token, no vault needed
+    Redeem {
+        /// Token string
+        #[arg(long, conflicts_with = "file")]
+        token: Option<String>,
+        /// File containing the token
+        #[arg(long, value_name = "PATH")]
+        file: Option<PathBuf>,
+    },
 }
 
 #[derive(clap::Args)]
@@ -306,6 +347,137 @@ fn generate(length: usize, include_symbols: bool) -> Result<()> {
         krypton_core::password::generate(length, include_symbols)?
     );
     Ok(())
+}
+
+fn share(path: &Path, command: ShareCommand) -> Result<()> {
+    match command {
+        ShareCommand::Create {
+            query,
+            ttl,
+            scope,
+            out,
+            force,
+        } => share_create(path, &query, &ttl, &scope, out.as_deref(), force),
+        ShareCommand::List => share_list(path),
+        ShareCommand::Redeem { token, file } => share_redeem(token.as_deref(), file.as_deref()),
+    }
+}
+
+fn share_create(
+    path: &Path,
+    query: &str,
+    ttl: &str,
+    scope: &str,
+    out: Option<&Path>,
+    force: bool,
+) -> Result<()> {
+    if let Some(out) = out
+        && out.exists()
+        && !force
+    {
+        bail!(
+            "{} already exists; pass --force to overwrite it",
+            out.display()
+        );
+    }
+
+    let scope: share_token::Scope = scope.parse()?;
+    let ttl_secs = share_token::parse_ttl(ttl)?;
+
+    let password = read_password("Master password: ")?;
+    let mut vault = Vault::open(path, &password)?;
+    let item = find_item(&vault, query)?;
+    let item_id = item.id.clone();
+    let title = item.title.clone();
+
+    let created = share_token::create_share(&vault, &item_id, scope, ttl_secs)?;
+    vault.shares_mut().push(created.record.clone());
+    vault.save()?;
+
+    if let Some(out) = out {
+        write_secret_file(out, format!("{}\n", created.token).as_bytes())?;
+        println!(
+            "Token for {title:?} ({} scope, valid {}) written to {}",
+            scope.label(),
+            format_duration(ttl_secs),
+            out.display()
+        );
+        println!("audit id: {}", created.record.token_id);
+    } else {
+        println!("{}", created.token);
+        eprintln!("audit id: {}", created.record.token_id);
+    }
+
+    eprintln!(
+        "WARNING: anyone holding this token can read the item until it expires; treat it like a password."
+    );
+    Ok(())
+}
+
+fn share_list(path: &Path) -> Result<()> {
+    let password = read_password("Master password: ")?;
+    let vault = Vault::open(path, &password)?;
+    let now = now_unix();
+
+    if vault.shares().is_empty() {
+        println!("No share tokens recorded in {}", vault.path().display());
+        return Ok(());
+    }
+
+    println!(
+        "{} token(s) in {}",
+        vault.shares().len(),
+        vault.path().display()
+    );
+    for record in vault.shares() {
+        let status = if record.is_expired(now) {
+            "expired".to_string()
+        } else {
+            format!("{} left", format_duration(record.remaining(now)))
+        };
+        println!(
+            "  {:<16} {:<22} {:<9} {}",
+            record.token_id,
+            record.item_title,
+            record.scope.label(),
+            status
+        );
+    }
+    Ok(())
+}
+
+fn share_redeem(token: Option<&str>, file: Option<&Path>) -> Result<()> {
+    let token = match (token, file) {
+        (Some(token), None) => token.to_string(),
+        (None, Some(file)) => std::fs::read_to_string(file)
+            .with_context(|| format!("could not read {}", file.display()))?
+            .trim()
+            .to_string(),
+        _ => bail!("pass exactly one of --token or --file"),
+    };
+
+    let redeemed = share_token::redeem(&token)?;
+    let remaining = format_duration(redeemed.expires_at.saturating_sub(now_unix()));
+
+    if redeemed.scope == share_token::Scope::Metadata {
+        println!("(metadata scope: secrets omitted)");
+    }
+    println!(
+        "scope:  {} ({remaining} left, id {})",
+        redeemed.scope.label(),
+        redeemed.token_id
+    );
+    print_item(&redeemed.item);
+    Ok(())
+}
+
+fn format_duration(seconds: u64) -> String {
+    match seconds {
+        s if s >= 86_400 => format!("{}d {}h", s / 86_400, s % 86_400 / 3_600),
+        s if s >= 3_600 => format!("{}h {}m", s / 3_600, s % 3_600 / 60),
+        s if s >= 60 => format!("{}m {}s", s / 60, s % 60),
+        s => format!("{s}s"),
+    }
 }
 
 fn add(path: &Path, command: AddCommand) -> Result<()> {
@@ -775,7 +947,11 @@ fn show(path: &Path, query: &str) -> Result<()> {
     let password = read_password("Master password: ")?;
     let vault = Vault::open(path, &password)?;
     let item = find_item(&vault, query)?;
+    print_item(item);
+    Ok(())
+}
 
+fn print_item(item: &Item) {
     println!("title:  {}", item.title);
     println!("id:     {}", item.id);
     println!("type:   {}", item.kind_label());
@@ -817,8 +993,6 @@ fn show(path: &Path, query: &str) -> Result<()> {
         }
         ItemKind::Note { body } => println!("body:\n{body}"),
     }
-
-    Ok(())
 }
 
 fn edit(path: &Path, query: &str, fields: &EditFields) -> Result<()> {

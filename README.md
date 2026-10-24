@@ -12,7 +12,7 @@ see [plan.md](plan.md).
 | Crate | Purpose |
 | --- | --- |
 | `crates/crypto` | Argon2id key derivation, XChaCha20-Poly1305 AEAD, secret key type |
-| `crates/core` | Vault file format, item model, encrypted storage, import/export, TOTP, audit, device identities |
+| `crates/core` | Vault file format, item model, encrypted storage, import/export, TOTP, audit, device identities, share tokens |
 | `crates/cli` | `krypton` binary (clap): `init`, `add`, `unlock`, `lock`, `export`, `import`, `device`, `sync`, `audit`, `totp` |
 | `crates/tui` | Placeholder for the Phase 4 Ratatui interface |
 
@@ -88,6 +88,11 @@ krypton device invite
 # Exchange an encrypted update with a paired device
 krypton sync export --to phone --out payload.bin
 krypton sync import --in payload.bin
+
+# Share one item as a time-limited bearer token
+krypton share create github --ttl 24h --scope read --out token.txt
+krypton share redeem --file token.txt
+krypton share list
 
 # Import / export plaintext JSON bodies: {"items": [...]}
 krypton import --in backup.json
@@ -175,6 +180,23 @@ built from the same salt and master password (for now: the same vault file).
   parameters and salt (no creation time, no owner identity).
 * `export` writes decrypted secrets to disk by design; delete the file
   afterwards.
+
+## Sharing (Phase 5)
+
+`krypton share create` mints a bearer token for one item with a TTL and a
+scope (`read` or `metadata`):
+
+```sh
+krypton share create github --ttl 24h --scope read --out token.txt
+krypton share redeem --file token.txt   # no vault needed
+krypton share list                      # audit log inside the vault
+```
+
+The item payload is sealed with a key derived from the random token key, and
+the scope plus expiry are bound as AEAD associated data, so editing them breaks
+decryption. The token key travels inside the token: whoever holds the string
+can read the item until it expires - treat it like a password. Expiry is
+enforced by the reader (`redeem`), since tokens are redeemed offline.
 
 ## License
 
