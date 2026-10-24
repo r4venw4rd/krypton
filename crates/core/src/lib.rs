@@ -10,6 +10,7 @@ pub mod audit;
 pub mod device;
 mod item;
 pub mod pairing;
+pub mod password;
 pub mod sync;
 pub mod totp;
 mod vault;

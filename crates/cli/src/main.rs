@@ -52,6 +52,16 @@ enum Command {
     /// Check credentials for weak, common and reused passwords
     Audit,
 
+    /// Generate a strong random password
+    Generate {
+        /// Number of characters
+        #[arg(long, default_value_t = krypton_core::password::DEFAULT_LENGTH)]
+        length: usize,
+        /// Letters and digits only, no symbols
+        #[arg(long)]
+        no_symbols: bool,
+    },
+
     /// Add a credential, note or TOTP seed to the vault
     Add {
         #[command(subcommand)]
@@ -114,6 +124,7 @@ fn main() -> Result<()> {
         Command::ChangePassword => change_password(&path),
         Command::Audit => audit(&path),
         Command::Add { item } => add(&path, item),
+        Command::Generate { length, no_symbols } => generate(length, !no_symbols),
         Command::Totp { query, at } => totp(&path, &query, at),
         Command::Export { output, force } => export(&path, &output, force),
         Command::Import { input, force } => import(&path, &input, force),
@@ -230,6 +241,14 @@ enum DeviceCommand {
         #[arg(long, value_name = "BLOB")]
         response: String,
     },
+}
+
+fn generate(length: usize, include_symbols: bool) -> Result<()> {
+    println!(
+        "{}",
+        krypton_core::password::generate(length, include_symbols)?
+    );
+    Ok(())
 }
 
 fn add(path: &Path, command: AddCommand) -> Result<()> {

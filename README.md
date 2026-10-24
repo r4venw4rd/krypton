@@ -49,6 +49,10 @@ The vault defaults to `~/.krypton/vault.kv`; override it with `--vault PATH`,
 # Create a new vault (prompts for the master password twice)
 krypton init
 
+# Generate a strong password (24 chars, one of each class, OS CSPRNG)
+krypton generate
+krypton generate --length 32 --no-symbols
+
 # Add items (the stored password is prompted for; --password for scripts)
 krypton add credential --title github --username r4venw4rd --url https://github.com
 krypton add note --title recovery --body "codes are in the safe"
