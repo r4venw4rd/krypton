@@ -8,7 +8,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use krypton_core::device::{DeviceKey, DeviceRecord, device_key_path};
-use krypton_core::{ItemKind, Vault, pairing, totp as totp_code};
+use krypton_core::{Item, ItemKind, Vault, pairing, totp as totp_code};
 
 /// Where the vault lives unless `--vault` / `KRYPTON_VAULT` says otherwise.
 const DEFAULT_DIR: &str = ".krypton";
@@ -51,6 +51,12 @@ enum Command {
 
     /// Check credentials for weak, common and reused passwords
     Audit,
+
+    /// Add a credential, note or TOTP seed to the vault
+    Add {
+        #[command(subcommand)]
+        item: AddCommand,
+    },
 
     /// Manage this device's Ed25519 identity
     Device {
@@ -107,12 +113,61 @@ fn main() -> Result<()> {
         Command::Lock => lock(&path),
         Command::ChangePassword => change_password(&path),
         Command::Audit => audit(&path),
+        Command::Add { item } => add(&path, item),
         Command::Totp { query, at } => totp(&path, &query, at),
         Command::Export { output, force } => export(&path, &output, force),
         Command::Import { input, force } => import(&path, &input, force),
         Command::Device { command } => device(&path, command),
         Command::Sync { command } => sync(&path, command),
     }
+}
+
+#[derive(Subcommand)]
+enum AddCommand {
+    /// Store a username/password pair
+    Credential {
+        /// Label shown in listings
+        #[arg(long)]
+        title: String,
+        /// Login name
+        #[arg(long)]
+        username: String,
+        /// Password to store; prompted for (hidden) when omitted
+        #[arg(long, value_name = "PASSWORD")]
+        password: Option<String>,
+        /// Site or service URL
+        #[arg(long)]
+        url: Option<String>,
+        /// Free-form notes
+        #[arg(long)]
+        notes: Option<String>,
+    },
+
+    /// Store free-form text
+    Note {
+        /// Label shown in listings
+        #[arg(long)]
+        title: String,
+        /// Note contents
+        #[arg(long)]
+        body: String,
+    },
+
+    /// Store an authenticator (TOTP) seed
+    Totp {
+        /// Label shown in listings
+        #[arg(long)]
+        title: String,
+        /// Base32 shared secret from the issuer
+        #[arg(long)]
+        secret: String,
+        /// Service that issued the seed
+        #[arg(long)]
+        issuer: Option<String>,
+        /// Account name the seed belongs to
+        #[arg(long)]
+        account: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -175,6 +230,75 @@ enum DeviceCommand {
         #[arg(long, value_name = "BLOB")]
         response: String,
     },
+}
+
+fn add(path: &Path, command: AddCommand) -> Result<()> {
+    let password = read_password("Master password: ")?;
+    let mut vault = Vault::open(path, &password)?;
+
+    let (title, kind) = match command {
+        AddCommand::Credential {
+            title,
+            username,
+            password,
+            url,
+            notes,
+        } => {
+            let password = match password {
+                Some(password) => password,
+                None => read_password("Password to store: ")?,
+            };
+            if password.is_empty() {
+                bail!("stored password must not be empty");
+            }
+            (
+                title,
+                ItemKind::Credential {
+                    username,
+                    password,
+                    url,
+                    notes,
+                },
+            )
+        }
+
+        AddCommand::Note { title, body } => (title, ItemKind::Note { body }),
+
+        AddCommand::Totp {
+            title,
+            secret,
+            issuer,
+            account,
+        } => {
+            // Reject a mistyped seed now instead of sealing it into the vault.
+            if let Err(err) = totp_code::generate(&secret, 0) {
+                bail!("invalid TOTP secret: {err}");
+            }
+            (
+                title,
+                ItemKind::Totp {
+                    secret,
+                    issuer,
+                    account,
+                },
+            )
+        }
+    };
+
+    if title.trim().is_empty() {
+        bail!("item title must not be empty");
+    }
+    let item = Item::new(title, kind)?;
+    let short_id = item.id[..8].to_string();
+    let label = item.kind_label();
+    vault.items_mut().push(item);
+    vault.save()?;
+
+    println!(
+        "Added {label} (id {short_id}) to {}",
+        vault.path().display()
+    );
+    Ok(())
 }
 
 fn device(path: &Path, command: DeviceCommand) -> Result<()> {

@@ -13,7 +13,7 @@ see [plan.md](plan.md).
 | --- | --- |
 | `crates/crypto` | Argon2id key derivation, XChaCha20-Poly1305 AEAD, secret key type |
 | `crates/core` | Vault file format, item model, encrypted storage, import/export, TOTP, audit, device identities |
-| `crates/cli` | `krypton` binary (clap): `init`, `unlock`, `lock`, `export`, `import` |
+| `crates/cli` | `krypton` binary (clap): `init`, `add`, `unlock`, `lock`, `export`, `import`, `device`, `sync`, `audit`, `totp` |
 | `crates/tui` | Placeholder for the Phase 4 Ratatui interface |
 
 ## Build and test
@@ -48,6 +48,11 @@ The vault defaults to `~/.krypton/vault.kv`; override it with `--vault PATH`,
 ```sh
 # Create a new vault (prompts for the master password twice)
 krypton init
+
+# Add items (the stored password is prompted for; --password for scripts)
+krypton add credential --title github --username r4venw4rd --url https://github.com
+krypton add note --title recovery --body "codes are in the safe"
+krypton add totp --title github-2fa --secret GEZDGNBVGY3TQOJQ --issuer GitHub
 
 # Decrypt and list items (secrets stay hidden)
 krypton unlock
