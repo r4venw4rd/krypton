@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Authenticated encryption of vault payloads.
 //!
-//! The 24-byte XChaCha20 nonce is random per seal, so re-sealing the same body
+//! The 24-byte `XChaCha20` nonce is random per seal, so re-sealing the same body
 //! (every save) never repeats a nonce. Callers pass associated data to bind the
 //! header (format, version, KDF parameters, salt) to the ciphertext, which makes
 //! downgrade or parameter-swap edits fail to decrypt.
@@ -12,17 +12,24 @@ use zeroize::Zeroizing;
 
 use crate::{CryptoError, SecretKey, random_bytes};
 
-/// XChaCha20 nonce length in bytes.
+/// `XChaCha20` nonce length in bytes.
 pub const NONCE_LEN: usize = 24;
 
 /// A sealed payload: random nonce plus ciphertext (which includes the tag).
 #[derive(Debug, Clone)]
 pub struct Sealed {
+    /// Random nonce that must travel with the ciphertext.
     pub nonce: [u8; NONCE_LEN],
+    /// Ciphertext including the Poly1305 tag.
     pub ciphertext: Vec<u8>,
 }
 
 /// Encrypts `plaintext` under `key`, authenticating `aad` alongside it.
+///
+/// # Errors
+///
+/// Returns [`CryptoError::Random`] if no nonce can be generated, or
+/// [`CryptoError::Encrypt`] if the cipher rejects the input.
 pub fn seal(key: &SecretKey, plaintext: &[u8], aad: &[u8]) -> Result<Sealed, CryptoError> {
     let nonce = random_bytes::<NONCE_LEN>()?;
     let cipher = XChaCha20Poly1305::new(key.as_bytes().into());
@@ -40,6 +47,12 @@ pub fn seal(key: &SecretKey, plaintext: &[u8], aad: &[u8]) -> Result<Sealed, Cry
 }
 
 /// Decrypts a sealed payload, verifying the tag covers `aad`.
+///
+/// # Errors
+///
+/// Returns [`CryptoError::Decrypt`] for a wrong key, a modified ciphertext or
+/// mismatched associated data; the three cases are intentionally
+/// indistinguishable.
 pub fn open(
     key: &SecretKey,
     nonce: &[u8; NONCE_LEN],

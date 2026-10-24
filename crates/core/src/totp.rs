@@ -15,25 +15,37 @@ pub const PERIOD: u64 = 30;
 /// Number of digits in a generated code.
 pub const DIGITS: u32 = 6;
 
+/// Failures from decoding a stored TOTP secret.
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum TotpError {
+    /// The stored secret has no characters left after normalisation.
     #[error("TOTP secret is empty")]
     EmptySecret,
+    /// The stored secret is not decodable base32.
     #[error("TOTP secret is not valid base32")]
     InvalidSecret,
+    /// HMAC could not be initialised; should not happen for SHA-1.
+    #[error("could not initialise the HMAC")]
+    Hmac,
 }
 
 /// Seconds left in the current time step.
-pub fn seconds_remaining(unix_time: u64) -> u64 {
+#[must_use]
+pub const fn seconds_remaining(unix_time: u64) -> u64 {
     PERIOD - (unix_time % PERIOD)
 }
 
 /// Generates the code for `unix_time`.
+///
+/// # Errors
+///
+/// Returns [`TotpError::EmptySecret`] or [`TotpError::InvalidSecret`] when the
+/// stored secret is unusable, and [`TotpError::Hmac`] if HMAC setup fails.
 pub fn generate(secret: &str, unix_time: u64) -> Result<String, TotpError> {
     let key = decode_secret(secret)?;
     let counter = unix_time / PERIOD;
 
-    let mut mac = HmacSha1::new_from_slice(&key).expect("HMAC accepts keys of any length");
+    let mut mac = HmacSha1::new_from_slice(&key).map_err(|_| TotpError::Hmac)?;
     mac.update(&counter.to_be_bytes());
     let digest = mac.finalize().into_bytes();
 
@@ -51,28 +63,26 @@ pub fn generate(secret: &str, unix_time: u64) -> Result<String, TotpError> {
 
 /// Checks `code` against the steps in `[unix_time - window, unix_time + window]`,
 /// which is what a small clock skew between devices needs.
+#[must_use]
 pub fn verify(secret: &str, unix_time: u64, code: &str, window: u32) -> bool {
     let code = code.trim().replace(' ', "");
     if code.len() != DIGITS as usize || !code.chars().all(|c| c.is_ascii_digit()) {
         return false;
     }
 
+    let current = unix_time / PERIOD;
     for step in 0..=u64::from(window) {
-        let mut offsets = [0i64; 3];
-        let count = if step == 0 {
-            1
-        } else {
-            offsets[1] = step as i64;
-            offsets[2] = -(step as i64);
-            3
-        };
+        let candidates = [
+            (current + step) * PERIOD,
+            current * PERIOD,
+            current.saturating_sub(step) * PERIOD,
+        ];
 
-        for offset in &offsets[..count] {
-            let counter = (unix_time / PERIOD).saturating_add_signed(*offset);
-            if let Ok(candidate) = generate(secret, counter * PERIOD)
-                && candidate == code
-            {
-                return true;
+        for shifted in candidates {
+            match generate(secret, shifted) {
+                Ok(candidate) if candidate == code => return true,
+                Ok(_) => {}
+                Err(_) => return false,
             }
         }
     }

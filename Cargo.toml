@@ -9,6 +9,22 @@ license = "AGPL-3.0-or-later"
 authors = ["r4venw4rd"]
 repository = "https://github.com/r4venw4rd/krypton"
 rust-version = "1.85"
+readme = "../../README.md"
+keywords = ["password-manager", "security", "encryption", "totp", "local-first"]
+categories = ["cryptography", "command-line-utilities"]
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "deny"
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+cargo = { level = "deny", priority = -1 }
+# serde_derive uses syn 2 while thiserror's proc macro uses syn 3; both are
+# transitive, so the duplicate cannot be removed from this workspace.
+multiple_crate_versions = "allow"
 
 [workspace.dependencies]
 krypton-core = { path = "crates/core" }

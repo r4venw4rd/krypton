@@ -20,6 +20,10 @@ pub struct Item {
 
 impl Item {
     /// Builds an item with a freshly generated identifier.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CryptoError::Random`] if the OS CSPRNG is unavailable.
     pub fn new(title: impl Into<String>, kind: ItemKind) -> Result<Self, CryptoError> {
         let id = random_bytes::<16>()?;
         Ok(Self {
@@ -30,7 +34,8 @@ impl Item {
     }
 
     /// Short type label for listings.
-    pub fn kind_label(&self) -> &'static str {
+    #[must_use]
+    pub const fn kind_label(&self) -> &'static str {
         self.kind.label()
     }
 }
@@ -39,24 +44,34 @@ impl Item {
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ItemKind {
+    /// Username/password pair for a site or service.
     Credential {
+        /// Login name for the account.
         username: String,
+        /// Password or other secret value.
         #[serde(default)]
         password: String,
+        /// Site or service the credential belongs to.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         url: Option<String>,
+        /// Free-form notes (recovery hints, security questions, ...).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         notes: Option<String>,
     },
+    /// Time-based one-time password seed.
     Totp {
         /// Base32 shared secret.
         secret: String,
+        /// Service that issued the seed, e.g. `GitHub`.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         issuer: Option<String>,
+        /// Account name the seed belongs to.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         account: Option<String>,
     },
+    /// Encrypted free-form text.
     Note {
+        /// Note contents.
         body: String,
     },
 }
@@ -65,13 +80,13 @@ pub enum ItemKind {
 impl fmt::Debug for ItemKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ItemKind::Credential { username, url, .. } => f
+            Self::Credential { username, url, .. } => f
                 .debug_struct("Credential")
                 .field("username", username)
                 .field("password", &"<redacted>")
                 .field("url", url)
                 .finish(),
-            ItemKind::Totp {
+            Self::Totp {
                 issuer, account, ..
             } => f
                 .debug_struct("Totp")
@@ -79,25 +94,29 @@ impl fmt::Debug for ItemKind {
                 .field("issuer", issuer)
                 .field("account", account)
                 .finish(),
-            ItemKind::Note { .. } => f.debug_struct("Note").field("body", &"<redacted>").finish(),
+            Self::Note { .. } => f.debug_struct("Note").field("body", &"<redacted>").finish(),
         }
     }
 }
 
 impl ItemKind {
-    pub fn label(&self) -> &'static str {
+    /// Machine-readable type label, matching the JSON `type` field.
+    #[must_use]
+    pub const fn label(&self) -> &'static str {
         match self {
-            ItemKind::Credential { .. } => "credential",
-            ItemKind::Totp { .. } => "totp",
-            ItemKind::Note { .. } => "note",
+            Self::Credential { .. } => "credential",
+            Self::Totp { .. } => "totp",
+            Self::Note { .. } => "note",
         }
     }
 }
 
 fn hex(bytes: &[u8]) -> String {
+    use std::fmt::Write as _;
+
     let mut out = String::with_capacity(bytes.len() * 2);
     for byte in bytes {
-        out.push_str(&format!("{byte:02x}"));
+        let _ = write!(out, "{byte:02x}");
     }
     out
 }

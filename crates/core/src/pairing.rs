@@ -37,22 +37,31 @@ pub const NONCE_LEN: usize = 16;
 /// out-of-band exchange).
 pub const INVITE_MAX_AGE_SECS: u64 = 24 * 60 * 60;
 
+/// Failures from creating, parsing or answering pairing blobs.
 #[derive(Debug, Error)]
 pub enum PairingError {
+    /// The blob is not valid base64.
     #[error("pairing blob is not valid base64")]
     Encoding,
+    /// The decoded blob is not valid JSON for its wire type.
     #[error("pairing blob is not valid JSON: {0}")]
     Json(#[from] serde_json::Error),
+    /// The blob is an invite where an acceptance was expected, or similar.
     #[error("unexpected pairing blob type: {0}")]
     UnexpectedType(String),
+    /// The blob was produced by a newer pairing format.
     #[error("unsupported pairing version {0}")]
     UnsupportedVersion(u32),
+    /// The Ed25519 signature did not verify against the embedded key.
     #[error("pairing signature is invalid")]
     SignatureInvalid,
+    /// The invite is older than [`INVITE_MAX_AGE_SECS`].
     #[error("pairing invite has expired; create a new one")]
     Expired,
+    /// The acceptance answers a different invite nonce.
     #[error("acceptance does not answer this invite")]
     NonceMismatch,
+    /// No nonce could be generated.
     #[error(transparent)]
     Crypto(#[from] CryptoError),
 }
@@ -60,8 +69,11 @@ pub enum PairingError {
 /// A verified invite from another device.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Invite {
+    /// Device name chosen by the inviting machine.
     pub name: String,
+    /// Base64 Ed25519 public key of the inviting device.
     pub public_key: String,
+    /// Unix timestamp (seconds) the invite was signed at.
     pub created_at: u64,
     /// Base64 nonce that the acceptance must echo.
     pub nonce: String,
@@ -69,6 +81,7 @@ pub struct Invite {
 
 impl Invite {
     /// Public identity to store in the trust list.
+    #[must_use]
     pub fn record(&self) -> DeviceRecord {
         DeviceRecord {
             name: self.name.clone(),
@@ -81,12 +94,17 @@ impl Invite {
 /// A verified acceptance from the joining device.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Acceptance {
+    /// Device name chosen by the joining machine.
     pub name: String,
+    /// Base64 Ed25519 public key of the joining device.
     pub public_key: String,
+    /// Unix timestamp (seconds) the acceptance was signed at.
     pub created_at: u64,
 }
 
 impl Acceptance {
+    /// Public identity to store in the trust list.
+    #[must_use]
     pub fn record(&self) -> DeviceRecord {
         DeviceRecord {
             name: self.name.clone(),
@@ -97,11 +115,20 @@ impl Acceptance {
 }
 
 /// Creates an invite signed by `key`.
+///
+/// # Errors
+///
+/// Returns [`PairingError::Crypto`] if no nonce can be generated, or
+/// [`PairingError::Json`] if the wire form cannot be serialised.
 pub fn create_invite(name: &str, key: &DeviceKey) -> Result<String, PairingError> {
     create_invite_at(name, key, now())
 }
 
 /// Creates an invite with an explicit timestamp (tests, deterministic flows).
+///
+/// # Errors
+///
+/// Same as [`create_invite`].
 pub fn create_invite_at(
     name: &str,
     key: &DeviceKey,
@@ -123,11 +150,22 @@ pub fn create_invite_at(
 }
 
 /// Verifies an invite blob and returns the peer's identity.
+///
+/// # Errors
+///
+/// Returns [`PairingError::Encoding`] or [`PairingError::Json`] for malformed
+/// input, [`PairingError::UnexpectedType`] / [`PairingError::UnsupportedVersion`]
+/// for foreign blobs, [`PairingError::Expired`] for stale invites, and
+/// [`PairingError::SignatureInvalid`] when the signature does not verify.
 pub fn parse_invite(blob: &str) -> Result<Invite, PairingError> {
     parse_invite_at(blob, now())
 }
 
 /// Verifies an invite blob against an explicit "now" (tests).
+///
+/// # Errors
+///
+/// Same as [`parse_invite`], evaluated against `now`.
 pub fn parse_invite_at(blob: &str, now: u64) -> Result<Invite, PairingError> {
     let wire: InviteWire = decode(blob)?;
     if wire.kind != INVITE_TYPE {
@@ -154,6 +192,11 @@ pub fn parse_invite_at(blob: &str, now: u64) -> Result<Invite, PairingError> {
 }
 
 /// Answers a verified invite, signed by the joining device's key.
+///
+/// # Errors
+///
+/// Returns [`PairingError::Crypto`] if no nonce can be generated, or
+/// [`PairingError::Json`] if the wire form cannot be serialised.
 pub fn create_acceptance(
     invite: &Invite,
     name: &str,
@@ -163,6 +206,10 @@ pub fn create_acceptance(
 }
 
 /// Answers an invite with an explicit timestamp (tests).
+///
+/// # Errors
+///
+/// Same as [`create_acceptance`].
 pub fn create_acceptance_at(
     invite: &Invite,
     name: &str,
@@ -187,6 +234,12 @@ pub fn create_acceptance_at(
 }
 
 /// Verifies that `blob` answers `invite` and returns the joining identity.
+///
+/// # Errors
+///
+/// Returns [`PairingError::NonceMismatch`] when the acceptance answers a
+/// different invite, plus the encoding, type, version and signature errors
+/// documented on [`parse_invite`].
 pub fn parse_acceptance(blob: &str, invite: &Invite) -> Result<Acceptance, PairingError> {
     let wire: AcceptanceWire = decode(blob)?;
     if wire.kind != ACCEPTANCE_TYPE {

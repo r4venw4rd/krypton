@@ -36,26 +36,37 @@ pub const FORMAT: &str = "krypton-vault";
 /// Vault format version understood by this build.
 pub const VERSION: u32 = 1;
 
+/// Failures from creating, opening or writing a vault.
 #[derive(Debug, Error)]
 pub enum VaultError {
+    /// A vault file already occupies the requested path.
     #[error("vault already exists at {0}")]
     AlreadyExists(PathBuf),
+    /// The requested vault file does not exist.
     #[error("vault not found at {0}")]
     NotFound(PathBuf),
+    /// An empty master password was supplied.
     #[error("master password must not be empty")]
     EmptyPassword,
+    /// Wrong password or altered ciphertext; deliberately indistinguishable.
     #[error("incorrect password or corrupted vault")]
     Decrypt,
+    /// The file is not a krypton vault.
     #[error("unsupported vault format: {0}")]
     UnsupportedFormat(String),
+    /// The file was written by a newer format version.
     #[error("unsupported vault version {0}")]
     UnsupportedVersion(u32),
+    /// A header field has a value the reader cannot use.
     #[error("vault file is malformed: {0}")]
     Malformed(String),
+    /// Key derivation, sealing or opening failed.
     #[error(transparent)]
     Crypto(#[from] krypton_crypto::CryptoError),
+    /// Reading or writing the vault file failed.
     #[error(transparent)]
     Io(#[from] std::io::Error),
+    /// The decrypted body or file envelope is not valid JSON.
     #[error(transparent)]
     Json(#[from] serde_json::Error),
 }
@@ -63,6 +74,7 @@ pub enum VaultError {
 /// Everything that lives inside the encrypted envelope.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct VaultBody {
+    /// Secret entries: credentials, TOTP seeds and notes.
     #[serde(default)]
     pub items: Vec<Item>,
     /// Public identities of devices trusted by this vault. The matching private
@@ -72,7 +84,9 @@ pub struct VaultBody {
 }
 
 impl VaultBody {
-    pub fn new(items: Vec<Item>) -> Self {
+    /// Builds a body from `items` with an empty trust list.
+    #[must_use]
+    pub const fn new(items: Vec<Item>) -> Self {
         Self {
             items,
             devices: Vec::new(),
@@ -101,11 +115,21 @@ impl std::fmt::Debug for Vault {
 
 impl Vault {
     /// Creates a new vault with default Argon2id parameters.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VaultError::EmptyPassword`] for an empty password,
+    /// [`VaultError::AlreadyExists`] if the path is taken, and crypto or I/O
+    /// errors while deriving the key and writing the file.
     pub fn create(path: impl Into<PathBuf>, password: &str) -> Result<Self, VaultError> {
         Self::create_with_params(path, password, KdfParams::default())
     }
 
     /// Creates a new vault with explicit KDF parameters (tests, migrations).
+    ///
+    /// # Errors
+    ///
+    /// Same as [`Vault::create`].
     pub fn create_with_params(
         path: impl Into<PathBuf>,
         password: &str,
@@ -133,6 +157,14 @@ impl Vault {
     }
 
     /// Opens and decrypts an existing vault.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VaultError::NotFound`] for a missing file,
+    /// [`VaultError::Decrypt`] for a wrong password or tampered ciphertext,
+    /// [`VaultError::UnsupportedFormat`] / [`VaultError::UnsupportedVersion`]
+    /// for foreign files, [`VaultError::Malformed`] for broken base64, and
+    /// crypto, JSON or I/O errors for everything else.
     pub fn open(path: impl AsRef<Path>, password: &str) -> Result<Self, VaultError> {
         let path = path.as_ref().to_path_buf();
         if !path.exists() {
@@ -171,44 +203,62 @@ impl Vault {
         })
     }
 
+    /// Path of the vault file on disk.
+    #[must_use]
     pub fn path(&self) -> &Path {
         &self.path
     }
 
-    pub fn kdf_params(&self) -> &KdfParams {
+    /// KDF parameters recorded in the vault header.
+    #[must_use]
+    pub const fn kdf_params(&self) -> &KdfParams {
         &self.kdf
     }
 
+    /// Items in the unlocked body.
+    #[must_use]
     pub fn items(&self) -> &[Item] {
         &self.body.items
     }
 
-    pub fn items_mut(&mut self) -> &mut Vec<Item> {
+    /// Mutable access to the items; call [`Vault::save`] afterwards.
+    pub const fn items_mut(&mut self) -> &mut Vec<Item> {
         &mut self.body.items
     }
 
+    /// Device identities in the trust list.
+    #[must_use]
     pub fn devices(&self) -> &[crate::device::DeviceRecord] {
         &self.body.devices
     }
 
-    pub fn devices_mut(&mut self) -> &mut Vec<crate::device::DeviceRecord> {
+    /// Mutable access to the trust list; call [`Vault::save`] afterwards.
+    pub const fn devices_mut(&mut self) -> &mut Vec<crate::device::DeviceRecord> {
         &mut self.body.devices
     }
 
-    pub fn body(&self) -> &VaultBody {
+    /// The whole decrypted body.
+    #[must_use]
+    pub const fn body(&self) -> &VaultBody {
         &self.body
     }
 
-    pub fn body_mut(&mut self) -> &mut VaultBody {
+    /// Mutable access to the body, for merges; call [`Vault::save`] afterwards.
+    pub const fn body_mut(&mut self) -> &mut VaultBody {
         &mut self.body
     }
 
     /// The derived vault key, for in-crate consumers such as device sync.
-    pub(crate) fn secret_key(&self) -> &SecretKey {
+    pub(crate) const fn secret_key(&self) -> &SecretKey {
         &self.key
     }
 
     /// Re-encrypts the body under a fresh nonce and writes it atomically.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VaultError::Crypto`] if sealing fails, or I/O / JSON errors
+    /// if the file cannot be serialised or written.
     pub fn save(&self) -> Result<(), VaultError> {
         self.write_encrypted(&self.salt, &self.key)
     }
@@ -217,6 +267,10 @@ impl Vault {
     ///
     /// The file is written before the in-memory salt/key switch over, so a
     /// failed write leaves the vault openable with the old password.
+    /// # Errors
+    ///
+    /// Returns [`VaultError::EmptyPassword`] for an empty password, and crypto
+    /// or I/O errors if the new key cannot be derived or written.
     pub fn change_password(&mut self, new_password: &str) -> Result<(), VaultError> {
         if new_password.is_empty() {
             return Err(VaultError::EmptyPassword);
@@ -251,6 +305,10 @@ impl Vault {
 
     /// Writes the decrypted body to `path` as plaintext JSON. Lossy by design:
     /// the caller is responsible for warning the user.
+    /// # Errors
+    ///
+    /// Returns [`VaultError::Json`] if the body cannot be serialised, or
+    /// [`VaultError::Io`] if the file cannot be written.
     pub fn export_plaintext(&self, path: impl AsRef<Path>) -> Result<(), VaultError> {
         write_private(
             path.as_ref(),
@@ -260,6 +318,11 @@ impl Vault {
     }
 
     /// Reads a plaintext body (`{"items": [...]}`) and seals it into a new vault.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VaultError::Json`] for an unreadable source, plus any error
+    /// from [`Vault::create`] or [`Vault::save`].
     pub fn import_plaintext(
         source: impl AsRef<Path>,
         destination: impl Into<PathBuf>,
@@ -305,7 +368,7 @@ fn decode_fixed<const N: usize>(encoded: &str, field: &str) -> Result<[u8; N], V
 }
 
 /// Writes `bytes` with owner-only permissions, replacing `path` atomically.
-pub(crate) fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+pub fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     if let Some(parent) = path.parent()
         && !parent.as_os_str().is_empty()
     {

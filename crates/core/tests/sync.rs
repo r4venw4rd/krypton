@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+//! Integration tests for encrypted sync payloads between paired devices.
+
 use std::fs;
 use std::path::PathBuf;
 

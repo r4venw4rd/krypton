@@ -21,18 +21,25 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 /// Length of a symmetric key in bytes (256 bits).
 pub const KEY_LEN: usize = 32;
 
+/// Failures from the key-derivation and AEAD primitives.
 #[derive(Debug, Error)]
 pub enum CryptoError {
+    /// Argon2 rejected the password or cost parameters.
     #[error("key derivation failed: {0}")]
     Kdf(#[from] argon2::Error),
+    /// The vault header names a KDF this build does not implement.
     #[error("unsupported key derivation algorithm: {0}")]
     UnsupportedAlgorithm(String),
+    /// The salt handed to the KDF has the wrong length.
     #[error("salt must be {SALT_LEN} bytes")]
     InvalidSalt,
+    /// The operating system CSPRNG could not produce bytes.
     #[error("system randomness is unavailable: {0}")]
     Random(#[from] getrandom::Error),
+    /// Sealing failed inside the AEAD primitive.
     #[error("encryption failed")]
     Encrypt,
+    /// Wrong key, altered ciphertext or mismatched associated data.
     #[error("decryption failed: wrong password or tampered data")]
     Decrypt,
 }
@@ -43,11 +50,14 @@ pub struct SecretKey([u8; KEY_LEN]);
 
 impl SecretKey {
     /// Wraps raw key bytes, taking ownership so the caller can wipe its copy.
-    pub fn from_bytes(bytes: [u8; KEY_LEN]) -> Self {
+    #[must_use]
+    pub const fn from_bytes(bytes: [u8; KEY_LEN]) -> Self {
         Self(bytes)
     }
 
-    pub fn as_bytes(&self) -> &[u8; KEY_LEN] {
+    /// Borrows the raw key bytes, e.g. as HKDF input.
+    #[must_use]
+    pub const fn as_bytes(&self) -> &[u8; KEY_LEN] {
         &self.0
     }
 }
@@ -59,6 +69,11 @@ impl fmt::Debug for SecretKey {
 }
 
 /// Fills a buffer of `N` bytes from the operating system CSPRNG.
+///
+/// # Errors
+///
+/// Returns [`CryptoError::Random`] if the operating system CSPRNG is
+/// unavailable.
 pub fn random_bytes<const N: usize>() -> Result<[u8; N], CryptoError> {
     let mut buf = [0u8; N];
     getrandom::getrandom(&mut buf)?;
@@ -74,7 +89,7 @@ mod tests {
         let key = SecretKey::from_bytes([7u8; KEY_LEN]);
         let rendered = format!("{key:?}");
         assert_eq!(rendered, "SecretKey(<redacted>)");
-        assert!(!rendered.contains("7"));
+        assert!(!rendered.contains('7'));
     }
 
     #[test]

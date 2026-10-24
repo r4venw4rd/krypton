@@ -21,8 +21,24 @@ see [plan.md](plan.md).
 ```sh
 cargo build --workspace
 cargo test --workspace
-cargo clippy --workspace --all-targets -- -D warnings
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --all-features
 ```
+
+## Quality gates
+
+The lint policy lives in the workspace manifest, not in a command someone has
+to remember - so `cargo clippy` fails on the same rules everywhere:
+
+* `rust`: `unsafe_code = "forbid"`, `missing_docs = "deny"`.
+* `clippy`: `all`, `pedantic`, `nursery` and `cargo` are denied.
+* The only allow is `clippy::multiple_crate_versions`: `serde_derive` pulls
+  `syn` 2 while thiserror's macro pulls `syn` 3, and neither copy is ours to
+  drop.
+
+Verified by intentionally adding an undocumented public item: clippy exits
+non-zero with `missing documentation for a function`, and the tree is green
+again once that probe is removed.
 
 ## Usage
 
@@ -141,8 +157,8 @@ built from the same salt and master password (for now: the same vault file).
 
 * A wrong password and a corrupted vault are reported identically by design;
   there is no separate authentication tag to distinguish them.
-* There is no password rotation command yet, and no metadata (creation time,
-  device identity) in the header.
+* The vault header carries no metadata beyond the format version, KDF
+  parameters and salt (no creation time, no owner identity).
 * `export` writes decrypted secrets to disk by design; delete the file
   afterwards.
 

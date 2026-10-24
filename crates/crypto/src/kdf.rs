@@ -42,6 +42,7 @@ impl Default for KdfParams {
 impl KdfParams {
     /// Cheap parameters for tests only. Never use these for a real vault.
     #[doc(hidden)]
+    #[must_use]
     pub fn weak_for_tests() -> Self {
         Self {
             algorithm: ALGORITHM.to_string(),
@@ -53,6 +54,13 @@ impl KdfParams {
 }
 
 /// Derives the vault key from the master password and salt.
+///
+/// # Errors
+///
+/// * [`CryptoError::InvalidSalt`] if `salt` is not exactly [`SALT_LEN`] bytes.
+/// * [`CryptoError::UnsupportedAlgorithm`] if `params.algorithm` is not
+///   `argon2id`.
+/// * [`CryptoError::Kdf`] if Argon2 rejects the cost parameters.
 pub fn derive_key(
     password: &[u8],
     salt: &[u8],

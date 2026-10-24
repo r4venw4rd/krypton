@@ -35,28 +35,40 @@ pub const SYNC_TYPE: &str = "krypton-sync";
 pub const VERSION: u32 = 1;
 const HKDF_SALT: &[u8] = b"krypton-sync-v1";
 
+/// Failures from sealing, verifying or merging sync payloads.
 #[derive(Debug, Error)]
 pub enum SyncError {
+    /// A base64 field did not decode.
     #[error("sync payload is not valid base64")]
     Encoding,
+    /// The payload or vault body is not valid JSON.
     #[error("sync payload is not valid JSON: {0}")]
     Json(#[from] serde_json::Error),
+    /// The payload is not a krypton sync payload.
     #[error("unexpected sync payload type: {0}")]
     UnexpectedType(String),
+    /// The payload was produced by a newer format version.
     #[error("unsupported sync payload version {0}")]
     UnsupportedVersion(u32),
+    /// The payload is addressed to a different device key.
     #[error("sync payload is addressed to another device")]
     WrongRecipient,
+    /// The local device tried to sync with itself.
     #[error("sync payload was sent by this device")]
     SelfAddressed,
+    /// The sender's key is not in the vault's trust list.
     #[error("sender {0} is not in the trust list; pair the devices first")]
     UntrustedSender(String),
+    /// The signature or the AEAD tag did not verify.
     #[error("sync payload signature is invalid")]
     SignatureInvalid,
+    /// A header field has an impossible value.
     #[error("sync payload is malformed: {0}")]
     Malformed(String),
+    /// A crypto primitive failed.
     #[error(transparent)]
     Crypto(#[from] CryptoError),
+    /// A payload file could not be read.
     #[error(transparent)]
     Io(#[from] std::io::Error),
 }
@@ -64,25 +76,38 @@ pub enum SyncError {
 /// A verified payload from a trusted device.
 #[derive(Debug)]
 pub struct Incoming {
+    /// Trust-list entry the payload's signature verified under.
     pub sender: DeviceRecord,
+    /// Decrypted body sent by that device.
     pub body: VaultBody,
 }
 
 /// How many entries a merge changed.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct MergeStats {
+    /// Items that did not exist locally before the merge.
     pub items_added: usize,
+    /// Existing items replaced by the incoming version.
     pub items_updated: usize,
+    /// Device records that were new to the trust list.
     pub devices_added: usize,
 }
 
 impl MergeStats {
-    pub fn changed(&self) -> usize {
+    /// Total number of entries the merge touched.
+    #[must_use]
+    pub const fn changed(&self) -> usize {
         self.items_added + self.items_updated + self.devices_added
     }
 }
 
 /// Seals the local vault body for `recipient_public_key`, signed by `sender`.
+///
+/// # Errors
+///
+/// Returns [`SyncError::SelfAddressed`] when the recipient is the sender,
+/// [`SyncError::Crypto`] if encryption fails, or [`SyncError::Json`] if the
+/// body cannot be serialised.
 pub fn create_payload(
     vault: &Vault,
     sender: &DeviceKey,
@@ -93,7 +118,7 @@ pub fn create_payload(
     }
 
     let sender_public_key = sender.public_key();
-    let key = derive_key(vault.secret_key(), &sender_public_key, recipient_public_key);
+    let key = derive_key(vault.secret_key(), &sender_public_key, recipient_public_key)?;
     let aad = associated_data(&sender_public_key, recipient_public_key);
 
     let body = serde_json::to_vec(vault.body())?;
@@ -117,6 +142,14 @@ pub fn create_payload(
 ///
 /// The sender must appear in the vault's trust list, which is also where the
 /// returned [`DeviceRecord`] comes from.
+///
+/// # Errors
+///
+/// Returns [`SyncError::WrongRecipient`] when the payload names another device,
+/// [`SyncError::UntrustedSender`] when the sender is not in the trust list, and
+/// [`SyncError::SignatureInvalid`] for a bad signature, tampered ciphertext or
+/// a decryption failure. Structural problems surface as [`SyncError::Json`],
+/// [`SyncError::UnexpectedType`] or [`SyncError::UnsupportedVersion`].
 pub fn read_payload(
     vault: &Vault,
     recipient: &DeviceKey,
@@ -159,7 +192,7 @@ pub fn read_payload(
         .decode(&wire.ciphertext)
         .map_err(|_| SyncError::Encoding)?;
 
-    let key = derive_key(vault.secret_key(), &wire.sender, &wire.recipient);
+    let key = derive_key(vault.secret_key(), &wire.sender, &wire.recipient)?;
     let plaintext = aead::open(&key, &nonce, &ciphertext, aad.as_bytes())
         .map_err(|_| SyncError::SignatureInvalid)?;
     let body: VaultBody = serde_json::from_slice(&plaintext)?;
@@ -175,21 +208,18 @@ pub fn merge(into: &mut VaultBody, incoming: VaultBody) -> MergeStats {
     let mut stats = MergeStats::default();
 
     for item in incoming.items {
-        match into
+        if let Some(existing) = into
             .items
             .iter_mut()
             .find(|existing| existing.id == item.id)
         {
-            Some(existing) => {
-                if *existing != item {
-                    *existing = item;
-                    stats.items_updated += 1;
-                }
+            if *existing != item {
+                *existing = item;
+                stats.items_updated += 1;
             }
-            None => {
-                into.items.push(item);
-                stats.items_added += 1;
-            }
+        } else {
+            into.items.push(item);
+            stats.items_added += 1;
         }
     }
 
@@ -207,7 +237,11 @@ pub fn merge(into: &mut VaultBody, incoming: VaultBody) -> MergeStats {
     stats
 }
 
-fn derive_key(vault_key: &SecretKey, sender: &str, recipient: &str) -> SecretKey {
+fn derive_key(
+    vault_key: &SecretKey,
+    sender: &str,
+    recipient: &str,
+) -> Result<SecretKey, SyncError> {
     let hkdf = Hkdf::<Sha256>::new(Some(HKDF_SALT), vault_key.as_bytes());
 
     let mut info = Vec::with_capacity(sender.len() + recipient.len() + 1);
@@ -217,8 +251,8 @@ fn derive_key(vault_key: &SecretKey, sender: &str, recipient: &str) -> SecretKey
 
     let mut okm = [0u8; krypton_crypto::KEY_LEN];
     hkdf.expand(&info, &mut okm)
-        .expect("32 bytes is a valid HKDF output length");
-    SecretKey::from_bytes(okm)
+        .map_err(|_| SyncError::Malformed("HKDF rejected the sync key length".to_string()))?;
+    Ok(SecretKey::from_bytes(okm))
 }
 
 fn associated_data(sender: &str, recipient: &str) -> String {
@@ -297,8 +331,8 @@ mod tests {
     #[test]
     fn derived_keys_are_direction_specific() {
         let vault_key = SecretKey::from_bytes([7u8; krypton_crypto::KEY_LEN]);
-        let forward = derive_key(&vault_key, "alice", "bob");
-        let backward = derive_key(&vault_key, "bob", "alice");
+        let forward = derive_key(&vault_key, "alice", "bob").unwrap();
+        let backward = derive_key(&vault_key, "bob", "alice").unwrap();
         assert_ne!(forward.as_bytes(), backward.as_bytes());
     }
 

@@ -27,12 +27,16 @@ pub const PUBLIC_KEY_LEN: usize = 32;
 /// Ed25519 signature length.
 pub const SIGNATURE_LEN: usize = 64;
 
+/// Failures from device-key handling.
 #[derive(Debug, Error)]
 pub enum DeviceError {
+    /// The underlying crypto primitive failed.
     #[error(transparent)]
     Crypto(#[from] CryptoError),
+    /// A seed file or seed blob did not contain a valid 32-byte seed.
     #[error("device key file is malformed: {0}")]
     Malformed(String),
+    /// Reading or writing the seed file failed.
     #[error(transparent)]
     Io(#[from] std::io::Error),
 }
@@ -40,13 +44,17 @@ pub enum DeviceError {
 /// Public identity of a device, as stored in the vault body.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeviceRecord {
+    /// Friendly name shown in trust lists and pairing output.
     pub name: String,
     /// Base64 Ed25519 public key.
     pub public_key: String,
+    /// Unix timestamp (seconds) of when the record was created.
     pub created_at: u64,
 }
 
 impl DeviceRecord {
+    /// Builds a record for `key`, stamped with the current time.
+    #[must_use]
     pub fn new(name: impl Into<String>, key: &DeviceKey) -> Self {
         Self {
             name: name.into(),
@@ -56,6 +64,7 @@ impl DeviceRecord {
     }
 
     /// Short human-comparable fingerprint, e.g. `1a2b-3c4d-5e6f-7a8b`.
+    #[must_use]
     pub fn fingerprint(&self) -> String {
         fingerprint(&self.public_key)
     }
@@ -66,11 +75,20 @@ pub struct DeviceKey(SigningKey);
 
 impl DeviceKey {
     /// Generates a new key from the OS CSPRNG.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DeviceError::Crypto`] if the operating system CSPRNG fails.
     pub fn generate() -> Result<Self, DeviceError> {
         let seed = random_bytes::<SEED_LEN>()?;
         Ok(Self(SigningKey::from_bytes(&seed)))
     }
 
+    /// Rebuilds a key from a 32-byte seed.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DeviceError::Malformed`] when `seed` is not [`SEED_LEN`] bytes.
     pub fn from_seed(seed: &[u8]) -> Result<Self, DeviceError> {
         let bytes: [u8; SEED_LEN] = seed
             .try_into()
@@ -79,25 +97,35 @@ impl DeviceKey {
     }
 
     /// The raw seed, for persistence only.
+    #[must_use]
     pub fn seed(&self) -> Zeroizing<[u8; SEED_LEN]> {
         Zeroizing::new(self.0.to_bytes())
     }
 
     /// Base64 public key, matching [`DeviceRecord::public_key`].
+    #[must_use]
     pub fn public_key(&self) -> String {
         BASE64.encode(self.0.verifying_key().to_bytes())
     }
 
+    /// Short fingerprint of this device's public key.
+    #[must_use]
     pub fn fingerprint(&self) -> String {
         fingerprint(&self.public_key())
     }
 
     /// Signs `message` and returns the base64 signature.
+    #[must_use]
     pub fn sign(&self, message: &[u8]) -> String {
         BASE64.encode(self.0.sign(message).to_bytes())
     }
 
     /// Reads a key from a base64 seed file.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DeviceError::Io`] if the file cannot be read, or
+    /// [`DeviceError::Malformed`] if it does not hold a base64 32-byte seed.
     pub fn load(path: impl AsRef<Path>) -> Result<Self, DeviceError> {
         let raw = fs::read_to_string(path)?;
         let seed = decode_fixed::<SEED_LEN>(&raw)
@@ -106,6 +134,10 @@ impl DeviceKey {
     }
 
     /// Writes the seed with owner-only permissions, replacing `path` atomically.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DeviceError::Io`] if the file cannot be written.
     pub fn save(&self, path: impl AsRef<Path>) -> Result<(), DeviceError> {
         let seed = self.seed();
         let encoded = format!("{}\n", BASE64.encode(seed.as_slice()));
@@ -115,6 +147,7 @@ impl DeviceKey {
 }
 
 /// Verifies a base64 signature over `message` by `public_key`.
+#[must_use]
 pub fn verify(public_key: &str, message: &[u8], signature: &str) -> bool {
     let Some(key_bytes) = decode_fixed::<PUBLIC_KEY_LEN>(public_key) else {
         return false;
@@ -131,6 +164,7 @@ pub fn verify(public_key: &str, message: &[u8], signature: &str) -> bool {
 }
 
 /// Short fingerprint of a base64 public key: first 8 bytes as `xxxx-xxxx-xxxx-xxxx`.
+#[must_use]
 pub fn fingerprint(public_key: &str) -> String {
     let Some(bytes) = decode_fixed::<PUBLIC_KEY_LEN>(public_key) else {
         return "invalid".to_string();
@@ -140,7 +174,7 @@ pub fn fingerprint(public_key: &str) -> String {
         .map(|byte| format!("{byte:02x}"))
         .collect();
     hex.chunks(2)
-        .map(|pair| pair.concat())
+        .map(<[std::string::String]>::concat)
         .collect::<Vec<_>>()
         .join("-")
 }
@@ -210,7 +244,7 @@ mod tests {
     fn seed_round_trips_through_a_file() {
         let dir = std::env::temp_dir().join(format!(
             "krypton-device-{}",
-            std::process::id() as u128 * 1_000 + now() as u128
+            u128::from(std::process::id()) * 1_000 + u128::from(now())
         ));
         fs::create_dir_all(&dir).unwrap();
         let path = dir.join("vault.device.key");

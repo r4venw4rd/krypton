@@ -37,30 +37,41 @@ const COMMON_PASSWORDS: &[&str] = &[
     "welcome",
 ];
 
+/// How urgently a finding should be fixed; sorts from least to most severe.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Severity {
+    /// Hygiene issue that should be fixed when convenient.
     Medium,
+    /// A credential that is likely already compromised.
     High,
 }
 
 impl Severity {
-    pub fn label(&self) -> &'static str {
+    /// Lower-case label used by the CLI.
+    #[must_use]
+    pub const fn label(&self) -> &'static str {
         match self {
-            Severity::Medium => "medium",
-            Severity::High => "high",
+            Self::Medium => "medium",
+            Self::High => "high",
         }
     }
 }
 
+/// One audit result attached to a vault item.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Finding {
+    /// Identifier of the item the finding belongs to.
     pub item_id: String,
+    /// Title of that item, for display.
     pub title: String,
+    /// Urgency of the finding.
     pub severity: Severity,
+    /// Human-readable explanation.
     pub message: String,
 }
 
 /// Checks every credential item and returns findings, most severe first.
+#[must_use]
 pub fn audit(items: &[Item]) -> Vec<Finding> {
     let mut findings = Vec::new();
     let mut password_uses: HashMap<&str, Vec<&str>> = HashMap::new();

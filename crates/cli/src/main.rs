@@ -177,156 +177,166 @@ enum DeviceCommand {
     },
 }
 
-fn device(path: &PathBuf, command: DeviceCommand) -> Result<()> {
+fn device(path: &Path, command: DeviceCommand) -> Result<()> {
     let key_path = device_key_path(path);
 
     match command {
-        DeviceCommand::Init { name, force } => {
-            if key_path.exists() && !force {
-                bail!(
-                    "{} already holds a device key; pass --force to replace it",
-                    key_path.display()
-                );
-            }
-
-            let password = read_password("Master password: ")?;
-            let mut vault = Vault::open(path, &password)?;
-
-            // A replaced key leaves a stale record behind: drop it so the trust
-            // list only names identities that still exist somewhere.
-            let previous = DeviceKey::load(&key_path).ok().map(|key| key.public_key());
-
-            let key = DeviceKey::generate()?;
-            key.save(&key_path)?;
-
-            let record = DeviceRecord::new(name, &key);
-            vault
-                .devices_mut()
-                .retain(|existing| Some(&existing.public_key) != previous.as_ref());
-            vault
-                .devices_mut()
-                .retain(|existing| existing.public_key != record.public_key);
-            vault.devices_mut().push(record.clone());
-            vault.save()?;
-
-            println!("Device registered as {:?}", record.name);
-            println!("  fingerprint: {}", record.fingerprint());
-            println!("  key file:    {}", key_path.display());
-            Ok(())
-        }
-
-        DeviceCommand::List => {
-            let password = read_password("Master password: ")?;
-            let vault = Vault::open(path, &password)?;
-
-            let local_key = DeviceKey::load(&key_path).ok();
-            let local_public = local_key.as_ref().map(DeviceKey::public_key);
-
-            if vault.devices().is_empty() {
-                println!("No devices registered in {}", vault.path().display());
-                return Ok(());
-            }
-
-            println!(
-                "{} device(s) in {}",
-                vault.devices().len(),
-                vault.path().display()
-            );
-            for device in vault.devices() {
-                let marker = if local_public.as_deref() == Some(device.public_key.as_str()) {
-                    "*"
-                } else {
-                    " "
-                };
-                println!(" {marker} {:<20} {}", device.name, device.fingerprint());
-            }
-            if local_key.is_none() {
-                println!("   (no local device key at {})", key_path.display());
-            }
-            Ok(())
-        }
-
-        DeviceCommand::Invite => {
-            let key = load_local_key(&key_path)?;
-
-            let password = read_password("Master password: ")?;
-            let vault = Vault::open(path, &password)?;
-            let name =
-                local_device_name(&vault, &key).unwrap_or_else(|| "krypton-device".to_string());
-
-            let blob = pairing::create_invite(&name, &key)?;
-            println!(
-                "Invite for {name:?} ({}) on {}:",
-                key.fingerprint(),
-                key_path.display()
-            );
-            println!("{blob}");
-            println!();
-            println!(
-                "Send this blob to the other device and run there:\n  krypton device accept --invite <blob>"
-            );
-            Ok(())
-        }
-
+        DeviceCommand::Init { name, force } => device_init(path, &key_path, name, force),
+        DeviceCommand::List => device_list(path, &key_path),
+        DeviceCommand::Invite => device_invite(path, &key_path),
         DeviceCommand::Accept { invite, name } => {
-            let key = load_local_key(&key_path)?;
-            let invite = pairing::parse_invite(&invite)?;
-            if invite.public_key == key.public_key() {
-                bail!("this invite belongs to the current device");
-            }
-
-            let password = read_password("Master password: ")?;
-            let mut vault = Vault::open(path, &password)?;
-
-            let name = name
-                .or_else(|| local_device_name(&vault, &key))
-                .unwrap_or_else(|| "krypton-device".to_string());
-
-            let acceptance = pairing::create_acceptance(&invite, &name, &key)?;
-            remember_device(&mut vault, invite.record());
-            vault.save()?;
-
-            println!(
-                "Added {:?} ({}) to the trust list",
-                invite.name,
-                invite.record().fingerprint()
-            );
-            println!(
-                "Compare that fingerprint with {:?} out of band before relying on it.",
-                invite.name
-            );
-            println!();
-            println!("Acceptance for {:?}:", invite.name);
-            println!("{acceptance}");
-            Ok(())
+            device_accept(path, &key_path, &invite, name.as_deref())
         }
-
         DeviceCommand::Complete { invite, response } => {
-            let key = load_local_key(&key_path)?;
-            let invite = pairing::parse_invite(&invite)?;
-            let acceptance = pairing::parse_acceptance(&response, &invite)?;
-            if acceptance.public_key == key.public_key() {
-                bail!("the acceptance came from this device");
-            }
-
-            let password = read_password("Master password: ")?;
-            let mut vault = Vault::open(path, &password)?;
-
-            remember_device(&mut vault, acceptance.record());
-            vault.save()?;
-
-            println!(
-                "Paired with {:?} ({})",
-                acceptance.name,
-                acceptance.record().fingerprint()
-            );
-            println!("Both devices now hold each other's public key.");
-            Ok(())
+            device_complete(path, &key_path, &invite, &response)
         }
     }
 }
 
-fn load_local_key(key_path: &PathBuf) -> Result<DeviceKey> {
+fn device_init(path: &Path, key_path: &Path, name: String, force: bool) -> Result<()> {
+    if key_path.exists() && !force {
+        bail!(
+            "{} already holds a device key; pass --force to replace it",
+            key_path.display()
+        );
+    }
+
+    let password = read_password("Master password: ")?;
+    let mut vault = Vault::open(path, &password)?;
+
+    // A replaced key leaves a stale record behind: drop it so the trust
+    // list only names identities that still exist somewhere.
+    let previous = DeviceKey::load(key_path).ok().map(|key| key.public_key());
+
+    let key = DeviceKey::generate()?;
+    key.save(key_path)?;
+
+    let record = DeviceRecord::new(name, &key);
+    vault
+        .devices_mut()
+        .retain(|existing| Some(&existing.public_key) != previous.as_ref());
+    vault
+        .devices_mut()
+        .retain(|existing| existing.public_key != record.public_key);
+    vault.devices_mut().push(record.clone());
+    vault.save()?;
+
+    println!("Device registered as {:?}", record.name);
+    println!("  fingerprint: {}", record.fingerprint());
+    println!("  key file:    {}", key_path.display());
+    Ok(())
+}
+
+fn device_list(path: &Path, key_path: &Path) -> Result<()> {
+    let password = read_password("Master password: ")?;
+    let vault = Vault::open(path, &password)?;
+
+    let local_key = DeviceKey::load(key_path).ok();
+    let local_public = local_key.as_ref().map(DeviceKey::public_key);
+
+    if vault.devices().is_empty() {
+        println!("No devices registered in {}", vault.path().display());
+        return Ok(());
+    }
+
+    println!(
+        "{} device(s) in {}",
+        vault.devices().len(),
+        vault.path().display()
+    );
+    for device in vault.devices() {
+        let marker = if local_public.as_deref() == Some(device.public_key.as_str()) {
+            "*"
+        } else {
+            " "
+        };
+        println!(" {marker} {:<20} {}", device.name, device.fingerprint());
+    }
+    if local_key.is_none() {
+        println!("   (no local device key at {})", key_path.display());
+    }
+    Ok(())
+}
+
+fn device_invite(path: &Path, key_path: &Path) -> Result<()> {
+    let key = load_local_key(key_path)?;
+
+    let password = read_password("Master password: ")?;
+    let vault = Vault::open(path, &password)?;
+    let name = local_device_name(&vault, &key).unwrap_or_else(|| "krypton-device".to_string());
+
+    let blob = pairing::create_invite(&name, &key)?;
+    println!(
+        "Invite for {name:?} ({}) on {}:",
+        key.fingerprint(),
+        key_path.display()
+    );
+    println!("{blob}");
+    println!();
+    println!(
+        "Send this blob to the other device and run there:\n  krypton device accept --invite <blob>"
+    );
+    Ok(())
+}
+
+fn device_accept(path: &Path, key_path: &Path, invite: &str, name: Option<&str>) -> Result<()> {
+    let key = load_local_key(key_path)?;
+    let invite = pairing::parse_invite(invite)?;
+    if invite.public_key == key.public_key() {
+        bail!("this invite belongs to the current device");
+    }
+
+    let password = read_password("Master password: ")?;
+    let mut vault = Vault::open(path, &password)?;
+
+    let name = name
+        .map(str::to_string)
+        .or_else(|| local_device_name(&vault, &key))
+        .unwrap_or_else(|| "krypton-device".to_string());
+
+    let acceptance = pairing::create_acceptance(&invite, &name, &key)?;
+    remember_device(&mut vault, invite.record());
+    vault.save()?;
+
+    println!(
+        "Added {:?} ({}) to the trust list",
+        invite.name,
+        invite.record().fingerprint()
+    );
+    println!(
+        "Compare that fingerprint with {:?} out of band before relying on it.",
+        invite.name
+    );
+    println!();
+    println!("Acceptance for {:?}:", invite.name);
+    println!("{acceptance}");
+    Ok(())
+}
+
+fn device_complete(path: &Path, key_path: &Path, invite: &str, response: &str) -> Result<()> {
+    let key = load_local_key(key_path)?;
+    let invite = pairing::parse_invite(invite)?;
+    let acceptance = pairing::parse_acceptance(response, &invite)?;
+    if acceptance.public_key == key.public_key() {
+        bail!("the acceptance came from this device");
+    }
+
+    let password = read_password("Master password: ")?;
+    let mut vault = Vault::open(path, &password)?;
+
+    remember_device(&mut vault, acceptance.record());
+    vault.save()?;
+
+    println!(
+        "Paired with {:?} ({})",
+        acceptance.name,
+        acceptance.record().fingerprint()
+    );
+    println!("Both devices now hold each other's public key.");
+    Ok(())
+}
+
+fn load_local_key(key_path: &Path) -> Result<DeviceKey> {
     DeviceKey::load(key_path).with_context(|| {
         format!(
             "no usable device key at {}; run `krypton device init --name <name>` first",
@@ -413,22 +423,21 @@ fn find_peer<'a>(vault: &'a Vault, query: &str) -> Result<&'a DeviceRecord> {
             || device.fingerprint().starts_with(&query_lower)
     });
 
-    match peer {
-        Some(peer) => Ok(peer),
-        None => {
-            let known: Vec<&str> = vault
-                .devices()
-                .iter()
-                .map(|device| device.name.as_str())
-                .collect();
-            if known.is_empty() {
-                bail!("no devices are paired yet; run `krypton device invite` first");
-            }
-            bail!(
-                "no trusted device matches {query:?}; known devices: {}",
-                known.join(", ")
-            );
+    if let Some(peer) = peer {
+        Ok(peer)
+    } else {
+        let known: Vec<&str> = vault
+            .devices()
+            .iter()
+            .map(|device| device.name.as_str())
+            .collect();
+        if known.is_empty() {
+            bail!("no devices are paired yet; run `krypton device invite` first");
         }
+        bail!(
+            "no trusted device matches {query:?}; known devices: {}",
+            known.join(", ")
+        );
     }
 }
 
@@ -487,10 +496,9 @@ fn unlock(path: &PathBuf) -> Result<()> {
 
     for item in items {
         let detail = match &item.kind {
-            ItemKind::Credential { username, url, .. } => match url {
-                Some(url) => format!("{username} <{url}>"),
-                None => username.clone(),
-            },
+            ItemKind::Credential { username, url, .. } => url
+                .as_ref()
+                .map_or_else(|| username.clone(), |url| format!("{username} <{url}>")),
             ItemKind::Totp {
                 issuer, account, ..
             } => match (issuer, account) {
