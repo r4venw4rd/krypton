@@ -8,7 +8,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use krypton_core::device::{DeviceKey, DeviceRecord, device_key_path};
-use krypton_core::{ItemKind, Vault, totp as totp_code};
+use krypton_core::{ItemKind, Vault, pairing, totp as totp_code};
 
 /// Where the vault lives unless `--vault` / `KRYPTON_VAULT` says otherwise.
 const DEFAULT_DIR: &str = ".krypton";
@@ -122,6 +122,29 @@ enum DeviceCommand {
 
     /// List the devices registered in the vault
     List,
+
+    /// Print a signed invite for another device to accept
+    Invite,
+
+    /// Verify an invite and print the acceptance blob for its owner
+    Accept {
+        /// Invite blob printed by the other device
+        #[arg(long, value_name = "BLOB")]
+        invite: String,
+        /// Name to register this device under (defaults to its trust-list name)
+        #[arg(long, value_name = "NAME")]
+        name: Option<String>,
+    },
+
+    /// Verify the peer's acceptance and add it to the trust list
+    Complete {
+        /// The invite blob this device printed
+        #[arg(long, value_name = "BLOB")]
+        invite: String,
+        /// Acceptance blob printed by the other device
+        #[arg(long, value_name = "BLOB")]
+        response: String,
+    },
 }
 
 fn device(path: &PathBuf, command: DeviceCommand) -> Result<()> {
@@ -192,7 +215,110 @@ fn device(path: &PathBuf, command: DeviceCommand) -> Result<()> {
             }
             Ok(())
         }
+
+        DeviceCommand::Invite => {
+            let key = load_local_key(&key_path)?;
+
+            let password = read_password("Master password: ")?;
+            let vault = Vault::open(path, &password)?;
+            let name =
+                local_device_name(&vault, &key).unwrap_or_else(|| "krypton-device".to_string());
+
+            let blob = pairing::create_invite(&name, &key)?;
+            println!(
+                "Invite for {name:?} ({}) on {}:",
+                key.fingerprint(),
+                key_path.display()
+            );
+            println!("{blob}");
+            println!();
+            println!(
+                "Send this blob to the other device and run there:\n  krypton device accept --invite <blob>"
+            );
+            Ok(())
+        }
+
+        DeviceCommand::Accept { invite, name } => {
+            let key = load_local_key(&key_path)?;
+            let invite = pairing::parse_invite(&invite)?;
+            if invite.public_key == key.public_key() {
+                bail!("this invite belongs to the current device");
+            }
+
+            let password = read_password("Master password: ")?;
+            let mut vault = Vault::open(path, &password)?;
+
+            let name = name
+                .or_else(|| local_device_name(&vault, &key))
+                .unwrap_or_else(|| "krypton-device".to_string());
+
+            let acceptance = pairing::create_acceptance(&invite, &name, &key)?;
+            remember_device(&mut vault, invite.record());
+            vault.save()?;
+
+            println!(
+                "Added {:?} ({}) to the trust list",
+                invite.name,
+                invite.record().fingerprint()
+            );
+            println!(
+                "Compare that fingerprint with {:?} out of band before relying on it.",
+                invite.name
+            );
+            println!();
+            println!("Acceptance for {:?}:", invite.name);
+            println!("{acceptance}");
+            Ok(())
+        }
+
+        DeviceCommand::Complete { invite, response } => {
+            let key = load_local_key(&key_path)?;
+            let invite = pairing::parse_invite(&invite)?;
+            let acceptance = pairing::parse_acceptance(&response, &invite)?;
+            if acceptance.public_key == key.public_key() {
+                bail!("the acceptance came from this device");
+            }
+
+            let password = read_password("Master password: ")?;
+            let mut vault = Vault::open(path, &password)?;
+
+            remember_device(&mut vault, acceptance.record());
+            vault.save()?;
+
+            println!(
+                "Paired with {:?} ({})",
+                acceptance.name,
+                acceptance.record().fingerprint()
+            );
+            println!("Both devices now hold each other's public key.");
+            Ok(())
+        }
     }
+}
+
+fn load_local_key(key_path: &PathBuf) -> Result<DeviceKey> {
+    DeviceKey::load(key_path).with_context(|| {
+        format!(
+            "no usable device key at {}; run `krypton device init --name <name>` first",
+            key_path.display()
+        )
+    })
+}
+
+fn local_device_name(vault: &Vault, key: &DeviceKey) -> Option<String> {
+    let public_key = key.public_key();
+    vault
+        .devices()
+        .iter()
+        .find(|device| device.public_key == public_key)
+        .map(|device| device.name.clone())
+}
+
+fn remember_device(vault: &mut Vault, record: DeviceRecord) {
+    vault
+        .devices_mut()
+        .retain(|existing| existing.public_key != record.public_key);
+    vault.devices_mut().push(record);
 }
 
 fn init(path: &PathBuf, force: bool) -> Result<()> {

@@ -52,6 +52,9 @@ krypton audit
 krypton device init --name laptop
 krypton device list
 
+# Pair with another device (see "Device identities" below)
+krypton device invite
+
 # Import / export plaintext JSON bodies: {"items": [...]}
 krypton import --in backup.json
 krypton export --out backup.json      # prints a plaintext warning
@@ -87,9 +90,29 @@ is stored inside the encrypted vault, so copying `vault.kv` to another machine
 does not give it a trusted identity. `krypton device list` marks the entry
 backed by the local key with `*` and shows short fingerprints.
 
-The pairing handshake, signed trust edges and TPM/secure-enclave binding are
-not implemented yet, and the local seed file is protected by file permissions
-alone rather than by the OS keyring.
+Device A invites, device B answers, device A confirms (pass the base64 lines
+between the machines over any channel):
+
+```sh
+# device A
+krypton device invite
+
+# device B, with A's invite blob
+krypton device accept --invite <blob>
+
+# device A, with B's acceptance blob
+krypton device complete --invite <blob> --response <blob>
+```
+
+The invite and acceptance are signed over a shared nonce, so both sides end up
+holding the other's verified public key. Compare the printed fingerprints out
+of band; invites expire after 24 hours and pairing blobs are signed but not
+encrypted (device names and public keys are visible to whoever carries them).
+
+Signed trust edges beyond "this key is in my list", revocation, replication of
+the trust list between paired devices, and TPM/secure-enclave binding are not
+implemented yet; the local seed file is protected by file permissions alone
+rather than by the OS keyring.
 
 ### Known limitations (Phase 1)
 

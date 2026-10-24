@@ -9,6 +9,7 @@
 pub mod audit;
 pub mod device;
 mod item;
+pub mod pairing;
 pub mod totp;
 mod vault;
 
